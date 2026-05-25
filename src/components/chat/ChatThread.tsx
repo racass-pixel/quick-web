@@ -8,7 +8,7 @@
 //   - Channel: title + "CHANNEL · N subscribers" kicker; composer hidden for
 //     non-admins with a grey caption.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Message } from '@racass-pixel/quick-protocol';
 import { Search } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
@@ -20,6 +20,7 @@ import { useChats } from '../../stores/useChats';
 import { usePresence, formatPresence } from '../../stores/usePresence';
 import { MembersModal } from '../chats/MembersModal';
 import { DmHeaderMenu } from '../chats/DmHeaderMenu';
+import { DaySeparator, dayLabel, sameDay } from './DaySeparator';
 
 type Props = {
   convId: string;
@@ -238,7 +239,7 @@ export function ChatThread({ convId }: Props) {
                 : 'No messages yet.'}
           </div>
         ) : (
-          messages.map((m) => {
+          messages.map((m, i) => {
             const isOwn = !!currentUserId && m.senderId === currentUserId;
             const createdMs = m.createdAt
               ? Number(m.createdAt.seconds) * 1000 +
@@ -246,13 +247,24 @@ export function ChatThread({ convId }: Props) {
               : 0;
             const isReadByPeer =
               isOwn && lastReadAtByPeer > 0 && createdMs <= lastReadAtByPeer;
+            const day = createdMs ? new Date(createdMs) : null;
+            const prev = i > 0 ? messages[i - 1] : null;
+            const prevDay = prev?.createdAt
+              ? new Date(
+                  Number(prev.createdAt.seconds) * 1000 +
+                    Math.floor(prev.createdAt.nanos / 1_000_000),
+                )
+              : null;
+            const needsSeparator = !!day && (!prevDay || !sameDay(day, prevDay));
             return (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                isOwn={isOwn}
-                isReadByPeer={isReadByPeer}
-              />
+              <Fragment key={m.id}>
+                {needsSeparator && day && <DaySeparator label={dayLabel(day)} />}
+                <MessageBubble
+                  message={m}
+                  isOwn={isOwn}
+                  isReadByPeer={isReadByPeer}
+                />
+              </Fragment>
             );
           })
         )}
