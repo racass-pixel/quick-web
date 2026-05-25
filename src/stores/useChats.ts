@@ -42,6 +42,26 @@ type WireTypingEnv = {
   by_user_id: string;
 };
 
+type WireConvAdded = {
+  id: string;
+  type: string;
+  title?: string;
+  avatar_color?: string;
+  my_role: string;
+  member_count: number;
+  last_message_at: string;
+};
+
+type WireConvAddedEnv = {
+  kind: 'conversation_added';
+  conversation: WireConvAdded;
+};
+
+type WireConvRemovedEnv = {
+  kind: 'conversation_removed';
+  conversation_id: string;
+};
+
 type ChatsState = {
   conversationsOrder: string[]; // conv ids, sorted by lastMessageAt desc
   byId: Record<string, Conversation>;
@@ -65,6 +85,8 @@ type ChatsState = {
   applyMessage(env: WireMessageEnv): void;
   applyRead(env: WireReadEnv): void;
   applyTyping(env: WireTypingEnv): void;
+  applyConversationAdded(env: WireConvAddedEnv): void;
+  applyConversationRemoved(env: WireConvRemovedEnv): void;
 };
 
 // Convert a wire-format message (snake_case + ISO string) to the proto Message
@@ -274,6 +296,66 @@ export const useChats = create<ChatsState>((set, get) => ({
     });
   },
 
+  applyConversationAdded(env) {
+    const w = env.conversation;
+    if (!w?.id) return;
+    set((s) => {
+      if (s.byId[w.id]) return {}; // already known; full refresh below will reconcile
+      const lastMs = w.last_message_at ? Date.parse(w.last_message_at) : 0;
+      const stub = {
+        $typeName: 'quick.v1.Conversation',
+        id: w.id,
+        type: w.type,
+        title: w.title ?? '',
+        peer: undefined,
+        lastMessageAt: lastMs
+          ? {
+              $typeName: 'google.protobuf.Timestamp',
+              seconds: BigInt(Math.floor(lastMs / 1000)),
+              nanos: (lastMs % 1000) * 1_000_000,
+            }
+          : undefined,
+        preview: undefined,
+        unreadCount: 0,
+        memberCount: w.member_count ?? 0,
+        avatarColor: w.avatar_color ?? '',
+        myRole: w.my_role ?? '',
+      } as unknown as Conversation;
+      const nextById = { ...s.byId, [w.id]: stub };
+      return {
+        byId: nextById,
+        conversationsOrder: reorderConvs(nextById),
+      };
+    });
+    // Reconcile against server to get peer/preview if any.
+    void get().loadConversations();
+  },
+
+  applyConversationRemoved(env) {
+    const id = env.conversation_id;
+    if (!id) return;
+    set((s) => {
+      if (!s.byId[id]) return {};
+      const nextById = { ...s.byId };
+      delete nextById[id];
+      const nextMessages = { ...s.messages };
+      delete nextMessages[id];
+      const nextTyping = { ...s.typing };
+      delete nextTyping[id];
+      const nextHasMore = { ...s.hasMore };
+      delete nextHasMore[id];
+      const nextActive = s.activeConvId === id ? null : s.activeConvId;
+      return {
+        byId: nextById,
+        messages: nextMessages,
+        typing: nextTyping,
+        hasMore: nextHasMore,
+        activeConvId: nextActive,
+        conversationsOrder: reorderConvs(nextById),
+      };
+    });
+  },
+
   applyTyping(env) {
     const convId = env.conversation_id;
     const userId = env.by_user_id;
@@ -320,6 +402,12 @@ function bridgeWs() {
         break;
       case 'typing':
         store.applyTyping(env as unknown as WireTypingEnv);
+        break;
+      case 'conversation_added':
+        store.applyConversationAdded(env as unknown as WireConvAddedEnv);
+        break;
+      case 'conversation_removed':
+        store.applyConversationRemoved(env as unknown as WireConvRemovedEnv);
         break;
       default:
       // ignore unknown kinds; forward-compatible
