@@ -4,14 +4,16 @@ import type { Friendship } from '@racass-pixel/quick-protocol';
 import { Route as RootRoute } from '../__root';
 import { session } from '../../api/session';
 import { friendsClient } from '../../api/friends';
+import { messagingClient } from '../../api/messaging';
 import { useAuth } from '../../stores/useAuth';
+import { AppSidebar } from '../../components/AppSidebar';
 import { Avatar } from '../../components/primitives/Avatar';
 import { Button } from '../../components/primitives/Button';
 import { Kicker } from '../../components/primitives/Kicker';
 
 function FriendsScreen() {
   const navigate = useNavigate();
-  const { user, isLoading, signOut } = useAuth();
+  const { user, isLoading } = useAuth();
   const [friends, setFriends] = useState<Friendship[] | null>(null);
   const [requests, setRequests] = useState<Friendship[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -65,52 +67,28 @@ function FriendsScreen() {
     }
   }
 
+  async function openDm(peerId: string) {
+    if (!peerId) return;
+    setBusy(peerId);
+    setError(null);
+    try {
+      const res = await messagingClient.openDM({ userId: peerId });
+      const conv = res.conversation;
+      if (!conv?.id) throw new Error('No conversation returned.');
+      navigate({ to: '/chats/$id', params: { id: conv.id } });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not open DM.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const hasIncoming = (requests?.length ?? 0) > 0;
   const hasFriends = (friends?.length ?? 0) > 0;
 
   return (
     <main className="min-h-screen flex">
-      <aside className="hidden md:flex w-64 border-r border-line flex-col p-6">
-        <Kicker>quick</Kicker>
-        <div className="flex items-center gap-3 mb-8">
-          <Avatar displayName={user.displayName} color={user.avatarColor} />
-          <div className="min-w-0">
-            <div className="text-ink-1 text-sm truncate">{user.displayName}</div>
-            <div className="text-ink-3 text-xs font-mono truncate">@{user.handle}</div>
-          </div>
-        </div>
-        <nav className="flex-1 flex flex-col gap-2 text-sm">
-          <Link
-            to="/friends"
-            className="text-ink-1 hover:text-ember [&.active]:text-ember"
-            activeProps={{ className: 'text-ember' }}
-          >
-            friends
-          </Link>
-          <Link
-            to="/friends/add"
-            className="text-ink-2 hover:text-ember"
-          >
-            add friend
-          </Link>
-          <Link
-            to="/settings"
-            className="text-ink-2 hover:text-ember"
-          >
-            settings
-          </Link>
-        </nav>
-        <button
-          type="button"
-          onClick={() => {
-            signOut();
-            navigate({ to: '/auth' });
-          }}
-          className="text-ink-3 hover:text-ember text-xs font-mono text-left"
-        >
-          sign out
-        </button>
-      </aside>
+      <AppSidebar />
 
       <section className="flex-1 px-6 md:px-12 py-12 md:py-24">
         <Kicker>your network</Kicker>
@@ -178,7 +156,7 @@ function FriendsScreen() {
                     color={f.peer?.avatarColor ?? ''}
                     size={48}
                   />
-                  <div className="min-w-0">
+                  <div className="flex-1 min-w-0">
                     <div className="text-ink-1 truncate">
                       {f.peer?.displayName}
                     </div>
@@ -186,6 +164,13 @@ function FriendsScreen() {
                       @{f.peer?.handle}
                     </div>
                   </div>
+                  <Button
+                    variant="ghost"
+                    onClick={() => openDm(f.peer?.id ?? '')}
+                    disabled={busy === f.peer?.id || !f.peer?.id}
+                  >
+                    Message
+                  </Button>
                 </li>
               ))}
             </ul>
