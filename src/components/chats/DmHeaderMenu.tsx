@@ -3,6 +3,7 @@
 // will fan out conversation_removed if it deletes the DM on its end).
 
 import { useState } from 'react';
+import { MoreVertical } from 'lucide-react';
 import { usersClient } from '../../api/users';
 
 export function DmHeaderMenu({
@@ -40,9 +41,9 @@ export function DmHeaderMenu({
         type="button"
         aria-label="Conversation menu"
         onClick={() => setOpen((v) => !v)}
-        className="text-ink-2 hover:text-ember w-8 h-8 flex items-center justify-center border border-line hover:border-ember transition-colors text-sm font-mono"
+        className="w-10 h-10 rounded-full flex items-center justify-center text-ink-2 hover:text-ember hover:bg-raised transition-colors"
       >
-        ⋯
+        <MoreVertical size={20} strokeWidth={2} />
       </button>
       {open && (
         <>

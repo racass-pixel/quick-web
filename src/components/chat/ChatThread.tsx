@@ -10,13 +10,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Message } from '@racass-pixel/quick-protocol';
+import { Search } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
-import { Kicker } from '../primitives/Kicker';
 import { CallButton } from '../call/CallButton';
 import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { TypingDot } from './TypingDot';
 import { useChats } from '../../stores/useChats';
+import { usePresence, formatPresence } from '../../stores/usePresence';
 import { MembersModal } from '../chats/MembersModal';
 import { DmHeaderMenu } from '../chats/DmHeaderMenu';
 
@@ -103,6 +104,11 @@ export function ChatThread({ convId }: Props) {
 
   const [showMembers, setShowMembers] = useState(false);
 
+  // usePresence must run on every render path (Rules of Hooks); pass undefined
+  // when there's no peer (initial loading or non-DM) and the hook no-ops.
+  const peerIdForPresence = conv?.peer?.id;
+  const presence = usePresence(peerIdForPresence);
+
   if (!conv) {
     return (
       <div className="flex-1 flex items-center justify-center text-ink-3 text-sm">
@@ -128,19 +134,32 @@ export function ChatThread({ convId }: Props) {
     await sendFn(convId, body);
   }
 
-  const kickerText = isDm
-    ? 'DM'
-    : isGroup
-      ? `group · ${conv.memberCount} ${conv.memberCount === 1 ? 'member' : 'members'}`
-      : isChannel
-        ? `channel · ${conv.memberCount} ${conv.memberCount === 1 ? 'subscriber' : 'subscribers'}`
-        : '';
-
   const titleClickable = isGroup || isChannel;
+
+  // Status line under the peer name.
+  //   DM:      online / typing… / last seen Xm ago / last seen recently
+  //   Group:   N members
+  //   Channel: N subscribers
+  let statusText = '';
+  let statusOnline = false;
+  if (isDm) {
+    if (peerTyping) {
+      statusText = 'typing…';
+    } else if (presence?.online) {
+      statusText = 'online';
+      statusOnline = true;
+    } else {
+      statusText = formatPresence(presence);
+    }
+  } else if (isGroup) {
+    statusText = `${conv.memberCount} ${conv.memberCount === 1 ? 'member' : 'members'}`;
+  } else if (isChannel) {
+    statusText = `${conv.memberCount} ${conv.memberCount === 1 ? 'subscriber' : 'subscribers'}`;
+  }
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
-      <header className="border-b border-line px-6 py-4 flex items-center gap-4">
+      <header className="h-14 border-b border-line px-4 flex items-center gap-3">
         <button
           type="button"
           onClick={titleClickable ? () => setShowMembers(true) : undefined}
@@ -148,49 +167,61 @@ export function ChatThread({ convId }: Props) {
           className={`shrink-0 ${titleClickable ? 'cursor-pointer' : 'cursor-default'}`}
           aria-label={titleClickable ? 'View members' : undefined}
         >
-          <Avatar displayName={peerName} color={headerColor} size={40} />
+          <Avatar displayName={peerName} color={headerColor} size={42} />
         </button>
         <button
           type="button"
           onClick={titleClickable ? () => setShowMembers(true) : undefined}
           disabled={!titleClickable}
           className={`flex-1 min-w-0 text-left ${
-            titleClickable ? 'hover:[&_span]:text-ember' : ''
+            titleClickable ? 'cursor-pointer' : 'cursor-default'
           }`}
         >
-          <Kicker className="mb-1">{kickerText}</Kicker>
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-ink-1 text-base truncate">{peerName}</span>
-            {isDm && peerHandle && (
-              <span className="text-ink-3 text-xs font-mono truncate">
-                @{peerHandle}
-              </span>
-            )}
+          <div className="text-ink-1 text-[16px] font-medium truncate">{peerName}</div>
+          <div
+            className={`text-[13px] truncate ${
+              statusOnline ? 'text-ember' : 'text-ink-3'
+            }`}
+          >
+            {statusText}
           </div>
         </button>
-        {isDm && conv.peer && (
-          <div className="flex items-center gap-2">
-            <CallButton
-              peer={{
-                id: conv.peer.id,
-                displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
-                handle: conv.peer.handle,
-                avatarColor: conv.peer.avatarColor,
-              }}
-              video={false}
-            />
-            <CallButton
-              peer={{
-                id: conv.peer.id,
-                displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
-                handle: conv.peer.handle,
-                avatarColor: conv.peer.avatarColor,
-              }}
-              video={true}
-            />
-            <DmHeaderMenu peerUserId={conv.peer.id} peerHandle={conv.peer.handle} />
-          </div>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            aria-label="Search"
+            title="Search (coming soon)"
+            disabled
+            className="w-10 h-10 rounded-full flex items-center justify-center text-ink-3 hover:bg-raised transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Search size={20} strokeWidth={2} />
+          </button>
+          {isDm && conv.peer && (
+            <>
+              <CallButton
+                peer={{
+                  id: conv.peer.id,
+                  displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
+                  handle: conv.peer.handle,
+                  avatarColor: conv.peer.avatarColor,
+                }}
+                video={false}
+                iconOnly
+              />
+              <CallButton
+                peer={{
+                  id: conv.peer.id,
+                  displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
+                  handle: conv.peer.handle,
+                  avatarColor: conv.peer.avatarColor,
+                }}
+                video={true}
+                iconOnly
+              />
+              <DmHeaderMenu peerUserId={conv.peer.id} peerHandle={conv.peer.handle} />
+            </>
+          )}
+        </div>
       </header>
 
       <div

@@ -1,8 +1,12 @@
 // Button rendered in the DM thread header. Dispatches a call to the peer.
 // Two visual variants for the two modes; both share the same start flow which
 // gates on the media-consent pre-prompt.
+//
+// `iconOnly` collapses the button to a 40x40 round icon shape, used by the
+// TG-style thread header where labels would clutter the row.
 
 import { useState } from 'react';
+import { Phone, Video } from 'lucide-react';
 import { useCall, type CallPeer } from '../../stores/useCall';
 import {
   MediaConsentModal,
@@ -14,9 +18,10 @@ type Props = {
   peer: CallPeer;
   video: boolean;
   className?: string;
+  iconOnly?: boolean;
 };
 
-export function CallButton({ peer, video, className = '' }: Props) {
+export function CallButton({ peer, video, className = '', iconOnly = false }: Props) {
   const start = useCall((s) => s.start);
   const callState = useCall((s) => s.state);
   const [showConsent, setShowConsent] = useState(false);
@@ -48,6 +53,35 @@ export function CallButton({ peer, video, className = '' }: Props) {
   const label = video ? 'Video' : 'Call';
   const ariaLabel = video ? 'Start video call' : 'Start voice call';
 
+  if (iconOnly) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={disabled}
+          aria-label={ariaLabel}
+          title={ariaLabel}
+          className={
+            'w-10 h-10 rounded-full inline-flex items-center justify-center text-ink-2 hover:text-ember hover:bg-raised transition-colors disabled:opacity-40 disabled:cursor-not-allowed ' +
+            className
+          }
+        >
+          {video ? <Video size={20} strokeWidth={2} /> : <Phone size={20} strokeWidth={2} />}
+        </button>
+        <MediaConsentModal
+          open={showConsent}
+          onContinue={() => {
+            setMediaConsent();
+            setShowConsent(false);
+            void fire();
+          }}
+          onCancel={() => setShowConsent(false)}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <button
@@ -65,7 +99,7 @@ export function CallButton({ peer, video, className = '' }: Props) {
           className
         }
       >
-        {video ? <VideoIcon /> : <PhoneIcon />}
+        {video ? <Video size={12} strokeWidth={2} /> : <Phone size={12} strokeWidth={2} />}
         <span>{label}</span>
       </button>
 
@@ -79,22 +113,5 @@ export function CallButton({ peer, video, className = '' }: Props) {
         onCancel={() => setShowConsent(false)}
       />
     </>
-  );
-}
-
-function PhoneIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.7 12.7 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.7 12.7 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-    </svg>
-  );
-}
-
-function VideoIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="6" width="14" height="12" rx="1.5" />
-      <path d="M16 10l6-3v10l-6-3z" />
-    </svg>
   );
 }
