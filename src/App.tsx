@@ -27,11 +27,12 @@ export default function App() {
         {theme === 'dark' ? 'Light' : 'Dark'}
       </button>
       <div className="text-center space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-qk-text">quick</h1>
-        {status.kind === 'loading' && <p className="text-qk-muted text-sm">Connecting…</p>}
-        {status.kind === 'error' && <p className="text-qk-danger text-sm">{status.message}</p>}
+        <div className="kicker mb-2">status</div>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink-1">quick</h1>
+        {status.kind === 'loading' && <p className="text-ink-2 text-sm">Connecting…</p>}
+        {status.kind === 'error' && <p className="text-err text-sm">{status.message}</p>}
         {status.kind === 'ok' && (
-          <p className="text-qk-muted text-sm font-mono">
+          <p className="text-ink-2 text-sm font-mono">
             server v{status.version} · {status.commit.slice(0, 7) || 'unknown'}
           </p>
         )}
