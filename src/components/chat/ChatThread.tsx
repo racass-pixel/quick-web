@@ -1,6 +1,12 @@
 // Right pane of /chats screen. Shows the open conversation thread, composer,
 // and a typing indicator. Auto-scrolls to bottom when a new message arrives
 // or is sent, unless the user has deliberately scrolled up to read history.
+//
+// The header varies by conversation type:
+//   - DM: peer avatar + name + @handle, call buttons + "..." menu (block).
+//   - Group: title + "GROUP · N members" kicker, members modal trigger.
+//   - Channel: title + "CHANNEL · N subscribers" kicker; composer hidden for
+//     non-admins with a grey caption.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Avatar } from '../primitives/Avatar';
@@ -10,6 +16,8 @@ import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { TypingDot } from './TypingDot';
 import { useChats } from '../../stores/useChats';
+import { MembersModal } from '../chats/MembersModal';
+import { DmHeaderMenu } from '../chats/DmHeaderMenu';
 
 type Props = {
   convId: string;
@@ -86,6 +94,8 @@ export function ChatThread({ convId }: Props) {
     !!typing &&
     Array.from(typing).some((uid) => uid !== currentUserId);
 
+  const [showMembers, setShowMembers] = useState(false);
+
   if (!conv) {
     return (
       <div className="flex-1 flex items-center justify-center text-ink-3 text-sm">
@@ -94,34 +104,64 @@ export function ChatThread({ convId }: Props) {
     );
   }
 
-  const peerName = conv.peer?.displayName ?? conv.title ?? 'Conversation';
+  const isDm = conv.type === 'dm' || !!conv.peer;
+  const isGroup = conv.type === 'group';
+  const isChannel = conv.type === 'channel';
+  const peerName = isDm
+    ? conv.peer?.displayName ?? conv.title ?? 'Conversation'
+    : conv.title || 'Conversation';
   const peerHandle = conv.peer?.handle;
+  const headerColor = (isDm ? conv.peer?.avatarColor : conv.avatarColor) ?? '';
+  const canPostInChannel =
+    isChannel && (conv.myRole === 'owner' || conv.myRole === 'admin');
+  const composerHidden = isChannel && !canPostInChannel;
 
   async function handleSend(body: string) {
     setPinnedToBottom(true);
     await sendFn(convId, body);
   }
 
+  const kickerText = isDm
+    ? 'DM'
+    : isGroup
+      ? `group · ${conv.memberCount} ${conv.memberCount === 1 ? 'member' : 'members'}`
+      : isChannel
+        ? `channel · ${conv.memberCount} ${conv.memberCount === 1 ? 'subscriber' : 'subscribers'}`
+        : '';
+
+  const titleClickable = isGroup || isChannel;
+
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
       <header className="border-b border-line px-6 py-4 flex items-center gap-4">
-        <Avatar
-          displayName={peerName}
-          color={conv.peer?.avatarColor ?? ''}
-          size={40}
-        />
-        <div className="flex-1 min-w-0">
-          <Kicker className="mb-1">DM</Kicker>
+        <button
+          type="button"
+          onClick={titleClickable ? () => setShowMembers(true) : undefined}
+          disabled={!titleClickable}
+          className={`shrink-0 ${titleClickable ? 'cursor-pointer' : 'cursor-default'}`}
+          aria-label={titleClickable ? 'View members' : undefined}
+        >
+          <Avatar displayName={peerName} color={headerColor} size={40} />
+        </button>
+        <button
+          type="button"
+          onClick={titleClickable ? () => setShowMembers(true) : undefined}
+          disabled={!titleClickable}
+          className={`flex-1 min-w-0 text-left ${
+            titleClickable ? 'hover:[&_span]:text-ember' : ''
+          }`}
+        >
+          <Kicker className="mb-1">{kickerText}</Kicker>
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="text-ink-1 text-base truncate">{peerName}</span>
-            {peerHandle && (
+            {isDm && peerHandle && (
               <span className="text-ink-3 text-xs font-mono truncate">
                 @{peerHandle}
               </span>
             )}
           </div>
-        </div>
-        {conv.peer && (
+        </button>
+        {isDm && conv.peer && (
           <div className="flex items-center gap-2">
             <CallButton
               peer={{
@@ -141,6 +181,7 @@ export function ChatThread({ convId }: Props) {
               }}
               video={true}
             />
+            <DmHeaderMenu peerUserId={conv.peer.id} peerHandle={conv.peer.handle} />
           </div>
         )}
       </header>
@@ -151,7 +192,11 @@ export function ChatThread({ convId }: Props) {
       >
         {messages.length === 0 ? (
           <div className="m-auto text-ink-3 text-sm">
-            Say hi to @{peerHandle ?? peerName}.
+            {isDm
+              ? `Say hi to @${peerHandle ?? peerName}.`
+              : isChannel
+                ? 'No posts yet.'
+                : 'No messages yet.'}
           </div>
         ) : (
           messages.map((m) => (
@@ -168,11 +213,30 @@ export function ChatThread({ convId }: Props) {
         {peerTyping && <TypingDot label={`@${peerHandle ?? 'peer'} is typing`} />}
       </div>
 
-      <Composer
-        onSend={handleSend}
-        onTyping={() => sendTyping(convId)}
-        placeholder={`Message @${peerHandle ?? peerName}`}
-      />
+      {composerHidden ? (
+        <div className="px-6 py-6 border-t border-line text-ink-3 text-xs font-mono text-center">
+          Only admins can post in this channel.
+        </div>
+      ) : (
+        <Composer
+          onSend={handleSend}
+          onTyping={() => sendTyping(convId)}
+          placeholder={
+            isDm
+              ? `Message @${peerHandle ?? peerName}`
+              : isChannel
+                ? 'Post to channel'
+                : `Message ${peerName}`
+          }
+        />
+      )}
+
+      {showMembers && (
+        <MembersModal
+          conversationId={convId}
+          onClose={() => setShowMembers(false)}
+        />
+      )}
     </div>
   );
 }
