@@ -1,0 +1,17 @@
+@import '@racass-pixel/quick-tokens/dist/css/tokens.css';
+
+@import 'tailwindcss';
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-sans);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+* { box-sizing: border-box; }
