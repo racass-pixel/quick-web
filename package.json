@@ -17,8 +17,10 @@
     "@racass-pixel/quick-protocol": "file:../quick-protocol/gen/ts",
     "@racass-pixel/quick-tokens": "file:../quick-backend/design-tokens",
     "@tanstack/react-router": "^1.170.8",
+    "livekit-client": "^2.0.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
