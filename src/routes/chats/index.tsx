@@ -5,8 +5,7 @@ import { session } from '../../api/session';
 import { ws } from '../../api/ws';
 import { useAuth } from '../../stores/useAuth';
 import { useChats } from '../../stores/useChats';
-import { AppSidebar } from '../../components/AppSidebar';
-import { ChatList } from '../../components/chat/ChatList';
+import { Sidebar } from '../../components/chats/Sidebar';
 import { Kicker } from '../../components/primitives/Kicker';
 
 function ChatsScreen() {
@@ -31,21 +30,16 @@ function ChatsScreen() {
 
   return (
     <main className="min-h-screen flex">
-      <AppSidebar />
-      <section className="flex-1 flex min-w-0">
-        <div className="w-full md:w-[320px] md:shrink-0 border-r border-line flex flex-col min-h-screen">
-          <ChatList />
-        </div>
-        <div className="hidden md:flex flex-1 items-center justify-center px-12">
-          <div className="max-w-sm text-center">
-            <Kicker>chats · empty</Kicker>
-            <h2 className="text-2xl tracking-tighter text-ink-1 mb-3">
-              Pick a conversation
-            </h2>
-            <p className="text-ink-3 text-sm">
-              Open one on the left, or start a new one with the + button.
-            </p>
-          </div>
+      <Sidebar />
+      <section className="hidden md:flex flex-1 items-center justify-center px-12">
+        <div className="max-w-sm text-center">
+          <Kicker>chats · empty</Kicker>
+          <h2 className="text-2xl tracking-tighter text-ink-1 mb-3">
+            Pick a conversation
+          </h2>
+          <p className="text-ink-3 text-sm">
+            Open one on the left, or start a new one with the + button.
+          </p>
         </div>
       </section>
     </main>

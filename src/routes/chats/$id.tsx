@@ -5,8 +5,7 @@ import { session } from '../../api/session';
 import { ws } from '../../api/ws';
 import { useAuth } from '../../stores/useAuth';
 import { useChats } from '../../stores/useChats';
-import { AppSidebar } from '../../components/AppSidebar';
-import { ChatList } from '../../components/chat/ChatList';
+import { Sidebar } from '../../components/chats/Sidebar';
 import { ChatThread } from '../../components/chat/ChatThread';
 
 function ChatThreadScreen() {
@@ -31,11 +30,10 @@ function ChatThreadScreen() {
 
   return (
     <main className="min-h-screen flex">
-      <AppSidebar />
+      <div className="hidden md:flex">
+        <Sidebar />
+      </div>
       <section className="flex-1 flex min-w-0 min-h-screen">
-        <div className="hidden md:flex w-[320px] shrink-0 border-r border-line flex-col">
-          <ChatList />
-        </div>
         <ChatThread convId={id} />
       </section>
     </main>
