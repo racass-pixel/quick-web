@@ -257,12 +257,22 @@ export const useChats = create<ChatsState>((set, get) => ({
   },
 
   applyMessage(env) {
+    // Diagnostic: every inbound message envelope, so a missing real-time update
+    // is visible in DevTools without backend access.
+    // eslint-disable-next-line no-console
+    console.debug('[chats] applyMessage', env);
+    if (!env?.message) {
+      // eslint-disable-next-line no-console
+      console.warn('[chats] applyMessage: missing message body', env);
+      return;
+    }
     const msg = wireToMessage(env.message);
-    // The canonical conversation id lives inside the message itself. Older code
-    // expected a top-level conversation_id and would silently drop frames when
-    // the backend didn't include one (which is the actual prod behaviour).
     const convId = env.message.conversation_id ?? env.conversation_id ?? '';
-    if (!convId) return;
+    if (!convId) {
+      // eslint-disable-next-line no-console
+      console.warn('[chats] applyMessage: no conversation_id', env);
+      return;
+    }
     set((s) => {
       const existing = s.messages[convId] ?? [];
       if (existing.some((m) => m.id === msg.id)) return {};
@@ -398,6 +408,8 @@ function bridgeWs() {
   if (bridged) return;
   bridged = true;
   ws.subscribe((env: WsEnvelope) => {
+    // eslint-disable-next-line no-console
+    console.debug('[chats] ws envelope', env);
     const store = useChats.getState();
     switch (env.kind) {
       case 'message':
