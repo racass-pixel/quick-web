@@ -6,6 +6,10 @@ import { Route as AuthProfileRoute } from './auth/profile';
 import { Route as ChatsIndexRoute } from './chats/index';
 import { Route as ChatThreadRoute } from './chats/$id';
 import { Route as SettingsRoute } from './settings';
+import {
+  FriendsRedirectRoute,
+  FriendsSplatRedirectRoute,
+} from './friends-redirect';
 
 export const routeTree = RootRoute.addChildren([
   IndexRoute,
@@ -15,4 +19,6 @@ export const routeTree = RootRoute.addChildren([
   ChatsIndexRoute,
   ChatThreadRoute,
   SettingsRoute,
+  FriendsRedirectRoute,
+  FriendsSplatRedirectRoute,
 ]);
