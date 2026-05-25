@@ -16,6 +16,7 @@
     "@connectrpc/connect-web": "^2.1.1",
     "@racass-pixel/quick-protocol": "file:../quick-protocol/gen/ts",
     "@racass-pixel/quick-tokens": "file:../quick-backend/design-tokens",
+    "@tanstack/react-router": "^1.170.8",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
