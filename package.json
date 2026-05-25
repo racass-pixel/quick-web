@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.29.3",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -13,8 +14,8 @@
     "@bufbuild/protobuf": "^2.12.0",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-web": "^2.1.1",
-    "@racass-pixel/quick-protocol": "file:..\\quick-protocol\\gen\\ts",
-    "@racass-pixel/quick-tokens": "file:..\\quick-backend\\design-tokens",
+    "@racass-pixel/quick-protocol": "file:../quick-protocol/gen/ts",
+    "@racass-pixel/quick-tokens": "file:../quick-backend/design-tokens",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
