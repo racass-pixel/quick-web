@@ -30,19 +30,6 @@ export function AppSidebar() {
           chats
         </Link>
         <Link
-          to="/friends"
-          className="text-ink-2 hover:text-ember [&.active]:text-ember"
-          activeProps={{ className: 'text-ember' }}
-        >
-          friends
-        </Link>
-        <Link
-          to="/friends/add"
-          className="text-ink-2 hover:text-ember"
-        >
-          add friend
-        </Link>
-        <Link
           to="/settings"
           className="text-ink-2 hover:text-ember [&.active]:text-ember"
           activeProps={{ className: 'text-ember' }}

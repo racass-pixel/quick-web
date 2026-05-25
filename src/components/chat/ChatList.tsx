@@ -38,24 +38,19 @@ export function ChatList() {
             disabled
             className="flex-1 bg-transparent text-ink-1 placeholder:text-ink-3 border-0 border-b border-line py-2 px-1 focus:outline-none focus:border-ember transition-colors text-sm disabled:opacity-60"
           />
-          <Link
-            to="/friends"
-            title="Start a DM from your friends list"
-            className="text-ink-3 hover:text-ember text-sm font-mono px-2 py-1 border border-line hover:border-ember transition-colors"
+          <span
+            title="New chat (coming soon)"
+            className="text-ink-3 text-sm font-mono px-2 py-1 border border-line opacity-50 select-none"
           >
             +
-          </Link>
+          </span>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         {order.length === 0 ? (
           <div className="p-6 text-ink-3 text-sm">
-            No conversations yet. Open a friend from{' '}
-            <Link to="/friends" className="text-ember hover:underline">
-              friends
-            </Link>
-            .
+            No conversations yet.
           </div>
         ) : (
           <ul className="divide-y divide-line">

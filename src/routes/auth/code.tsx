@@ -43,7 +43,7 @@ function AuthCodeScreen() {
       if (r.isNewAccount) {
         navigate({ to: '/auth/profile' });
       } else {
-        navigate({ to: '/friends' });
+        navigate({ to: '/chats' });
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Invalid code.');

@@ -43,7 +43,7 @@ function ChatsScreen() {
               Pick a conversation
             </h2>
             <p className="text-ink-3 text-sm">
-              Open one on the left, or start a new DM from your friends list.
+              Open one on the left, or start a new one with the + button.
             </p>
           </div>
         </div>

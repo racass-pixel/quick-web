@@ -42,7 +42,7 @@ function AuthProfileScreen() {
         handle: handle.trim(),
       });
       if (r.user) setCachedUser(r.user);
-      navigate({ to: '/friends' });
+      navigate({ to: '/chats' });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save.');
       setSubmitting(false);

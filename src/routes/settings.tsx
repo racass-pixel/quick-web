@@ -72,7 +72,7 @@ function SettingsScreen() {
       <div className="w-full max-w-md">
         <div className="mb-8">
           <Link
-            to="/friends"
+            to="/chats"
             className="text-ink-3 hover:text-ember text-xs font-mono"
           >
             ← back
