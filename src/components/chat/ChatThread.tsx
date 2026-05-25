@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Avatar } from '../primitives/Avatar';
 import { Kicker } from '../primitives/Kicker';
+import { CallButton } from '../call/CallButton';
 import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { TypingDot } from './TypingDot';
@@ -120,14 +121,28 @@ export function ChatThread({ convId }: Props) {
             )}
           </div>
         </div>
-        <button
-          type="button"
-          disabled
-          title="Coming in S5"
-          className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-transparent text-ink-2 border border-line"
-        >
-          Call
-        </button>
+        {conv.peer && (
+          <div className="flex items-center gap-2">
+            <CallButton
+              peer={{
+                id: conv.peer.id,
+                displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
+                handle: conv.peer.handle,
+                avatarColor: conv.peer.avatarColor,
+              }}
+              video={false}
+            />
+            <CallButton
+              peer={{
+                id: conv.peer.id,
+                displayName: conv.peer.displayName || conv.peer.handle || 'Peer',
+                handle: conv.peer.handle,
+                avatarColor: conv.peer.avatarColor,
+              }}
+              video={true}
+            />
+          </div>
+        )}
       </header>
 
       <div
