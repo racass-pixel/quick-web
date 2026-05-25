@@ -9,6 +9,7 @@
 //     non-admins with a grey caption.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { Message } from '@racass-pixel/quick-protocol';
 import { Avatar } from '../primitives/Avatar';
 import { Kicker } from '../primitives/Kicker';
 import { CallButton } from '../call/CallButton';
@@ -25,9 +26,15 @@ type Props = {
 
 const BOTTOM_THRESHOLD = 80; // px from bottom counts as "at bottom"
 
+// Stable empty array so the selector returns the same reference between renders
+// when there are no messages yet — otherwise every render builds a new `[]`,
+// which makes effect deps see a "new" array each time and creates an infinite
+// re-render loop (React #185).
+const EMPTY_MESSAGES: Message[] = [];
+
 export function ChatThread({ convId }: Props) {
   const conv = useChats((s) => s.byId[convId]);
-  const messages = useChats((s) => s.messages[convId] ?? []);
+  const messages = useChats((s) => s.messages[convId] ?? EMPTY_MESSAGES);
   const typing = useChats((s) => s.typing[convId]);
   const currentUserId = useChats((s) => s.currentUserId);
   const loadMessages = useChats((s) => s.loadMessages);
