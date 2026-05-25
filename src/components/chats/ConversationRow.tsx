@@ -1,6 +1,6 @@
-// Single row in the chats sidebar list. Telegram-style: 60px tall, with
-// avatar, title, last-message preview, timestamp, and unread badge. Title is
-// the peer's display name for DMs, otherwise the conversation title.
+// Single row in the chats sidebar list. Telegram-Web-K style: 72px tall,
+// 54px avatar, name 16/medium top-left, time 12/mono top-right, preview
+// 14/ink-2 bottom-left, unread ember pill bottom-right.
 
 import { Link } from '@tanstack/react-router';
 import type { Conversation } from '@racass-pixel/quick-protocol';
@@ -13,7 +13,10 @@ function formatRelative(ms: number): string {
   if (min < 1) return 'now';
   if (min < 60) return `${min}m`;
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
+  if (hr < 24) {
+    const d = new Date(ms);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
   const d = Math.floor(hr / 24);
   if (d < 7) return `${d}d`;
   const date = new Date(ms);
@@ -49,33 +52,33 @@ export function ConversationRow({
     <Link
       to="/chats/$id"
       params={{ id: conv.id }}
-      className={`flex items-center gap-3 px-4 h-[60px] hover:bg-raised transition-colors ${
-        active ? 'bg-raised' : ''
+      className={`flex items-center gap-3 px-3 h-[72px] transition-colors ${
+        active ? 'bg-raised' : 'hover:bg-raised/60'
       }`}
     >
       <div className="relative shrink-0">
-        <Avatar displayName={displayName} color={avatarColor} size={42} />
+        <Avatar displayName={displayName} color={avatarColor} size={54} />
         {badge && (
-          <span className="absolute -bottom-0.5 -right-0.5 text-[9px] font-mono px-1 py-px bg-bg text-ink-2 border border-line">
+          <span className="absolute -bottom-0.5 -right-0.5 text-[9px] font-mono px-1 py-px bg-bg text-ink-2 border border-line rounded">
             {badge}
           </span>
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
-          <span className="text-ink-1 text-sm truncate flex-1">
+          <span className="text-ink-1 text-[16px] font-medium truncate flex-1">
             {displayName}
           </span>
-          <span className="text-ink-3 text-[10px] font-mono uppercase tracking-wider shrink-0">
+          <span className="text-ink-3 text-[12px] font-mono tabular-nums shrink-0">
             {formatRelative(ms)}
           </span>
         </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-ink-3 text-xs truncate flex-1">
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-ink-2 text-[14px] truncate flex-1 leading-5">
             {previewText || (isDm && handle ? `@${handle}` : '')}
           </span>
           {conv.unreadCount > 0 && (
-            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-ember text-bg shrink-0">
+            <span className="text-[12px] font-mono leading-none px-1.5 min-w-[20px] h-5 inline-flex items-center justify-center bg-ember text-bg rounded-full shrink-0">
               {conv.unreadCount}
             </span>
           )}

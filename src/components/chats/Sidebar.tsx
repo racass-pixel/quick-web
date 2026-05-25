@@ -1,14 +1,13 @@
-// Telegram-style left sidebar for /chats. Hosts the user-avatar settings
-// trigger, a CHATS kicker, a "+" new-chat trigger, a search input, the
-// conversation list, and a settings link at the bottom.
+// Telegram-style left sidebar for /chats. 360px wide on desktop with a 56px
+// top bar (hamburger + search + pencil) and a 72px-row conversation list.
 //
-// State for the new-chat menu + modals lives here so the rest of the chats
-// pane stays stateless.
+// The user-avatar settings popover anchors off the hamburger button at the
+// left of the top bar; the pencil at the right opens the NewChatMenu.
 
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useRef, useState } from 'react';
+import { Menu, Pencil, Search } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
-import { Kicker } from '../primitives/Kicker';
 import { useAuth } from '../../stores/useAuth';
 import { useChats } from '../../stores/useChats';
 import { ConversationRow } from './ConversationRow';
@@ -53,92 +52,94 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-full md:w-[320px] md:shrink-0 bg-bg border-r border-line text-ink-1 flex flex-col min-h-0 h-full">
-      {/* Top row: avatar (settings popover) + CHATS kicker + "+" trigger */}
-      <div className="relative px-4 pt-4 pb-3 border-b border-line">
-        <div className="flex items-center gap-3">
-          <div ref={profileRef} className="relative">
-            <button
-              type="button"
-              aria-label="Account menu"
-              onClick={() => setProfileOpen((v) => !v)}
-              className="block rounded-full focus:outline-none focus:ring-1 focus:ring-ember"
-            >
-              {user ? (
-                <Avatar displayName={user.displayName} color={user.avatarColor} size={36} />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-raised" />
-              )}
-            </button>
-            {profileOpen && (
-              <>
-                <button
-                  type="button"
-                  aria-hidden
-                  className="fixed inset-0 z-10 cursor-default"
-                  onClick={() => setProfileOpen(false)}
-                />
-                <div
-                  role="menu"
-                  className="absolute z-20 left-0 top-12 w-56 bg-bg border border-line shadow-lg py-1 text-sm"
-                >
-                  {user && (
-                    <div className="px-3 py-2 border-b border-line">
+    <aside className="w-full md:w-[360px] md:shrink-0 bg-bg border-r border-line text-ink-1 flex flex-col min-h-0 h-full">
+      {/* Top bar — 56px: hamburger (anchors account popover), search, pencil. */}
+      <div className="relative h-14 px-3 flex items-center gap-2 border-b border-line">
+        <div ref={profileRef} className="relative">
+          <button
+            type="button"
+            aria-label="Account menu"
+            onClick={() => setProfileOpen((v) => !v)}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-ink-2 hover:text-ink-1 hover:bg-raised transition-colors focus:outline-none focus:ring-1 focus:ring-ember"
+          >
+            <Menu size={22} strokeWidth={2} />
+          </button>
+          {profileOpen && (
+            <>
+              <button
+                type="button"
+                aria-hidden
+                className="fixed inset-0 z-10 cursor-default"
+                onClick={() => setProfileOpen(false)}
+              />
+              <div
+                role="menu"
+                className="absolute z-20 left-0 top-12 w-60 bg-panel border border-line shadow-lg rounded-md py-1.5 text-sm"
+              >
+                {user && (
+                  <div className="px-3 py-2.5 border-b border-line flex items-center gap-3">
+                    <Avatar displayName={user.displayName} color={user.avatarColor} size={36} />
+                    <div className="min-w-0">
                       <div className="text-ink-1 truncate">{user.displayName}</div>
                       <div className="text-ink-3 text-xs font-mono truncate">
                         @{user.handle}
                       </div>
                     </div>
-                  )}
-                  <Link
-                    to="/settings"
-                    onClick={() => setProfileOpen(false)}
-                    className="block px-3 py-2 text-ink-2 hover:text-ember hover:bg-raised"
-                  >
-                    Settings
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={doSignOut}
-                    className="block w-full text-left px-3 py-2 text-ink-2 hover:text-ember hover:bg-raised"
-                  >
-                    Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-          <Kicker className="mb-0 flex-1">chats</Kicker>
-          <div className="relative">
-            <button
-              ref={menuAnchorRef}
-              type="button"
-              aria-label="New chat"
-              onClick={() => setMenuOpen((v) => !v)}
-              className="text-ink-2 hover:text-ember text-base font-mono w-8 h-8 flex items-center justify-center border border-line hover:border-ember transition-colors"
-            >
-              +
-            </button>
-            {menuOpen && (
-              <NewChatMenu
-                onClose={() => setMenuOpen(false)}
-                onPick={(kind) => {
-                  setMenuOpen(false);
-                  setModal(kind);
-                }}
-              />
-            )}
-          </div>
+                  </div>
+                )}
+                <Link
+                  to="/settings"
+                  onClick={() => setProfileOpen(false)}
+                  className="block px-3 py-2 text-ink-2 hover:text-ink-1 hover:bg-raised"
+                >
+                  Settings
+                </Link>
+                <button
+                  type="button"
+                  onClick={doSignOut}
+                  className="block w-full text-left px-3 py-2 text-ink-2 hover:text-err hover:bg-raised"
+                >
+                  Sign out
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="mt-3">
+        <div className="flex-1 relative">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none"
+            strokeWidth={2}
+          />
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
-            className="w-full bg-raised text-ink-1 placeholder:text-ink-3 border border-transparent py-1.5 px-3 focus:outline-none focus:border-ember transition-colors text-sm"
+            className="w-full h-9 bg-raised text-ink-1 placeholder:text-ink-3 border border-transparent rounded-full pl-9 pr-3 focus:outline-none focus:border-ember transition-colors text-sm"
           />
+        </div>
+
+        <div className="relative">
+          <button
+            ref={menuAnchorRef}
+            type="button"
+            aria-label="New chat"
+            onClick={() => setMenuOpen((v) => !v)}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-ink-2 hover:text-ember hover:bg-raised transition-colors"
+          >
+            <Pencil size={18} strokeWidth={2} />
+          </button>
+          {menuOpen && (
+            <NewChatMenu
+              onClose={() => setMenuOpen(false)}
+              onPick={(kind) => {
+                setMenuOpen(false);
+                setModal(kind);
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -146,10 +147,10 @@ export function Sidebar() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="p-6 text-ink-3 text-sm">
-            {query ? 'No matches.' : 'No conversations yet. Tap + to start one.'}
+            {query ? 'No matches.' : 'No conversations yet. Tap the pencil to start one.'}
           </div>
         ) : (
-          <ul className="divide-y divide-line">
+          <ul>
             {filtered.map((id) => {
               const conv = byId[id];
               if (!conv) return null;
@@ -161,16 +162,6 @@ export function Sidebar() {
             })}
           </ul>
         )}
-      </div>
-
-      {/* Bottom: settings link */}
-      <div className="border-t border-line px-4 py-3">
-        <Link
-          to="/settings"
-          className="text-ink-3 hover:text-ember text-xs font-mono"
-        >
-          settings
-        </Link>
       </div>
 
       {/* New-chat modals */}
