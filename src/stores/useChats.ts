@@ -25,7 +25,9 @@ type WireMessage = {
 
 type WireMessageEnv = {
   kind: 'message';
-  conversation_id: string;
+  // Backend only puts conversation_id inside .message — keep it optional at
+  // the top level for forward-compat with envelopes that include it later.
+  conversation_id?: string;
   message: WireMessage;
 };
 
@@ -256,7 +258,11 @@ export const useChats = create<ChatsState>((set, get) => ({
 
   applyMessage(env) {
     const msg = wireToMessage(env.message);
-    const convId = env.conversation_id;
+    // The canonical conversation id lives inside the message itself. Older code
+    // expected a top-level conversation_id and would silently drop frames when
+    // the backend didn't include one (which is the actual prod behaviour).
+    const convId = env.message.conversation_id ?? env.conversation_id ?? '';
+    if (!convId) return;
     set((s) => {
       const existing = s.messages[convId] ?? [];
       if (existing.some((m) => m.id === msg.id)) return {};
