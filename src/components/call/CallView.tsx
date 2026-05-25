@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Track as TrackType } from 'livekit-client';
+import { AppWindow, Monitor } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
 import { Kicker } from '../primitives/Kicker';
 import { useCall } from '../../stores/useCall';
@@ -44,7 +45,8 @@ export function CallView() {
   const toggles = useCall((s) => s.toggles);
   const toggleMic = useCall((s) => s.toggleMic);
   const toggleCamera = useCall((s) => s.toggleCamera);
-  const toggleScreenShare = useCall((s) => s.toggleScreenShare);
+  const startScreenShare = useCall((s) => s.startScreenShare);
+  const stopScreenShare = useCall((s) => s.stopScreenShare);
   const end = useCall((s) => s.end);
 
   const localCameraTrack = useCall((s) => s.localCameraTrack);
@@ -172,10 +174,28 @@ export function CallView() {
           onClick={() => void toggleCamera()}
         />
         <CallControl
-          label="Share screen"
-          icon={<ScreenIcon />}
+          label={toggles.screenShareOn ? 'Stop sharing screen' : 'Share screen'}
+          icon={<Monitor size={20} strokeWidth={1.75} />}
           active={toggles.screenShareOn}
-          onClick={() => void toggleScreenShare()}
+          onClick={() => {
+            if (toggles.screenShareOn) {
+              void stopScreenShare();
+            } else {
+              void startScreenShare('monitor');
+            }
+          }}
+        />
+        <CallControl
+          label={toggles.screenShareOn ? 'Stop sharing window' : 'Share window'}
+          icon={<AppWindow size={20} strokeWidth={1.75} />}
+          active={toggles.screenShareOn}
+          onClick={() => {
+            if (toggles.screenShareOn) {
+              void stopScreenShare();
+            } else {
+              void startScreenShare('window');
+            }
+          }}
         />
         <button
           type="button"
@@ -254,15 +274,6 @@ function CamOffIcon() {
       <line x1="3" y1="3" x2="21" y2="21" />
       <path d="M16 11l5-3v8l-5-3z" />
       <path d="M3 7h7l6 6v3a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 16V7z" />
-    </svg>
-  );
-}
-function ScreenIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="13" rx="1.5" />
-      <line x1="8" y1="21" x2="16" y2="21" />
-      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }

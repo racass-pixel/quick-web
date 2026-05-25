@@ -18,13 +18,17 @@
 //   call_ended      — fans out to the other party when either hangs up.
 
 import { create } from 'zustand';
-import { Room, RoomEvent, Track } from 'livekit-client';
+import { Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
 import type {
   LocalTrackPublication,
   RemoteParticipant,
   RemoteTrack,
   RemoteTrackPublication,
 } from 'livekit-client';
+
+// Discord-Nitro-tier screen share source. Either entry pre-selects a
+// different surface in the browser's getDisplayMedia picker.
+export type ScreenShareSource = 'monitor' | 'window';
 import type { CallJoin } from '@racass-pixel/quick-protocol';
 import { callsClient } from '../api/calls';
 import type { WsEnvelope } from '../api/ws';
@@ -87,7 +91,8 @@ type CallStore = {
   end(): Promise<void>;
   toggleMic(): Promise<void>;
   toggleCamera(): Promise<void>;
-  toggleScreenShare(): Promise<void>;
+  startScreenShare(source?: ScreenShareSource): Promise<void>;
+  stopScreenShare(): Promise<void>;
   onIncomingCallEnvelope(env: WsEnvelope): void;
 
   // Test/internal helpers — exposed so the modal can be force-dismissed when
@@ -166,9 +171,24 @@ export const useCall = create<CallStore>((set, get) => {
 
   async function connectRoom(join: CallJoin, video: boolean) {
     await disposeRoom();
+    // Discord-Nitro-class screen share defaults: 12 Mbps / 60 fps ceiling
+    // with simulcast layers at 720p (fallback), 1080p, and 2160p (4K). LiveKit
+    // adaptively chooses per peer based on bandwidth; the ceiling is what
+    // matters for crisp text on a high-DPI monitor.
     const room = new Room({
       adaptiveStream: true,
       dynacast: true,
+      publishDefaults: {
+        screenShareEncoding: {
+          maxBitrate: 12_000_000,
+          maxFramerate: 60,
+        },
+        videoSimulcastLayers: [
+          VideoPresets.h720,
+          VideoPresets.h1080,
+          VideoPresets.h2160,
+        ],
+      },
     });
     activeRoom = room;
 
@@ -346,16 +366,49 @@ export const useCall = create<CallStore>((set, get) => {
       attachLocalTracks();
     },
 
-    async toggleScreenShare() {
+    async startScreenShare(source: ScreenShareSource = 'monitor') {
       if (!activeRoom) return;
-      const next = !get().toggles.screenShareOn;
+      if (get().toggles.screenShareOn) return;
+      // Base capture options: 4K target resolution, content-hint 'detail' for
+      // crisp text, system audio enabled (Chrome screen+tab captures get a
+      // mixed audio track), and surfaceSwitching so the user can change source
+      // mid-share without renegotiating.
+      const baseOpts: Record<string, unknown> = {
+        resolution: { width: 3840, height: 2160 },
+        contentHint: 'detail',
+        audio: true,
+        systemAudio: 'include',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+        preferCurrentTab: false,
+        displaySurface: source,
+      };
       try {
-        await activeRoom.localParticipant.setScreenShareEnabled(next);
-        set((s) => ({ toggles: { ...s.toggles, screenShareOn: next } }));
+        // displaySurface is honored by browsers even when not present in
+        // every livekit-client version's ScreenShareCaptureOptions type, so
+        // we widen the type via the Record cast above.
+        await activeRoom.localParticipant.setScreenShareEnabled(
+          true,
+          baseOpts as Parameters<
+            typeof activeRoom.localParticipant.setScreenShareEnabled
+          >[1],
+        );
+        set((s) => ({ toggles: { ...s.toggles, screenShareOn: true } }));
       } catch {
-        // User cancelled the browser picker — keep state in sync.
+        // User cancelled the browser picker, or capture failed — stay off.
         set((s) => ({ toggles: { ...s.toggles, screenShareOn: false } }));
       }
+      attachLocalTracks();
+    },
+
+    async stopScreenShare() {
+      if (!activeRoom) return;
+      try {
+        await activeRoom.localParticipant.setScreenShareEnabled(false);
+      } catch {
+        /* ignore */
+      }
+      set((s) => ({ toggles: { ...s.toggles, screenShareOn: false } }));
       attachLocalTracks();
     },
 
