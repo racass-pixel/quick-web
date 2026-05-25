@@ -70,6 +70,10 @@ type ChatsState = {
   messages: Record<string, Message[]>; // newest-last
   hasMore: Record<string, boolean>;
   typing: Record<string, Set<string>>; // convId -> userIds typing within last 3s
+  // Peer's last-read watermark per conversation (ms epoch). When a `read`
+  // envelope arrives from someone other than us, we update this so our
+  // outgoing-message bubbles can flip from single to double tick.
+  lastReadAtByPeer: Record<string, number>;
   loadingConvs: boolean;
   loadingMessages: Record<string, boolean>;
   activeConvId: string | null;
@@ -133,6 +137,7 @@ export const useChats = create<ChatsState>((set, get) => ({
   messages: {},
   hasMore: {},
   typing: {},
+  lastReadAtByPeer: {},
   loadingConvs: false,
   loadingMessages: {},
   activeConvId: null,
@@ -298,17 +303,32 @@ export const useChats = create<ChatsState>((set, get) => ({
   },
 
   applyRead(env) {
-    // For now we only react to our own read receipts to clear our unread.
     set((s) => {
-      if (s.currentUserId == null || env.by_user_id !== s.currentUserId) return {};
-      const conv = s.byId[env.conversation_id];
-      if (!conv || conv.unreadCount === 0) return {};
-      return {
-        byId: {
-          ...s.byId,
-          [env.conversation_id]: { ...conv, unreadCount: 0 } as Conversation,
-        },
-      };
+      const updates: Partial<ChatsState> = {};
+
+      // Own read receipt → clear local unread count for snappy UI.
+      if (s.currentUserId != null && env.by_user_id === s.currentUserId) {
+        const conv = s.byId[env.conversation_id];
+        if (conv && conv.unreadCount > 0) {
+          updates.byId = {
+            ...s.byId,
+            [env.conversation_id]: { ...conv, unreadCount: 0 } as Conversation,
+          };
+        }
+      } else if (env.by_user_id) {
+        // Peer's read receipt → bump the per-conv watermark so our outgoing
+        // bubbles can flip from single to double tick.
+        const ms = env.last_read_at ? Date.parse(env.last_read_at) : Date.now();
+        const prev = s.lastReadAtByPeer[env.conversation_id] ?? 0;
+        if (ms > prev) {
+          updates.lastReadAtByPeer = {
+            ...s.lastReadAtByPeer,
+            [env.conversation_id]: ms,
+          };
+        }
+      }
+
+      return updates;
     });
   },
 

@@ -38,6 +38,7 @@ export function ChatThread({ convId }: Props) {
   const messages = useChats((s) => s.messages[convId] ?? EMPTY_MESSAGES);
   const typing = useChats((s) => s.typing[convId]);
   const currentUserId = useChats((s) => s.currentUserId);
+  const lastReadAtByPeer = useChats((s) => s.lastReadAtByPeer[convId] ?? 0);
   const loadMessages = useChats((s) => s.loadMessages);
   const setActiveConv = useChats((s) => s.setActiveConv);
   const sendFn = useChats((s) => s.send);
@@ -237,13 +238,23 @@ export function ChatThread({ convId }: Props) {
                 : 'No messages yet.'}
           </div>
         ) : (
-          messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              isOwn={!!currentUserId && m.senderId === currentUserId}
-            />
-          ))
+          messages.map((m) => {
+            const isOwn = !!currentUserId && m.senderId === currentUserId;
+            const createdMs = m.createdAt
+              ? Number(m.createdAt.seconds) * 1000 +
+                Math.floor(m.createdAt.nanos / 1_000_000)
+              : 0;
+            const isReadByPeer =
+              isOwn && lastReadAtByPeer > 0 && createdMs <= lastReadAtByPeer;
+            return (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                isOwn={isOwn}
+                isReadByPeer={isReadByPeer}
+              />
+            );
+          })
         )}
       </div>
 
