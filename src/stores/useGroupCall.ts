@@ -22,6 +22,7 @@ import { create } from 'zustand';
 import { Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
 import type {
   LocalTrackPublication,
+  Participant,
   RemoteParticipant,
   RemoteTrack,
   RemoteTrackPublication,
@@ -41,6 +42,11 @@ export type CallLayout = 'grid' | 'focused' | 'screen-only' | 'single';
 export type CallParticipantTile = {
   // Unique key for React. For local: 'local'. For remote: RemoteParticipant.identity.
   participantId: string;
+  // LiveKit identity for this participant (local or remote). Distinct from
+  // `participantId` because the 1:1 view uses synthetic ids for stable keys
+  // while speaker detection / participant lookups still want the real wire
+  // identity. Falls back to empty string when we don't have one yet.
+  speakerIdentity: string;
   // Human-readable display name. Falls back to identity for the local case.
   displayName: string;
   isLocal: boolean;
@@ -84,6 +90,10 @@ type GroupCallStore = {
   // Discord-style minimize: hides the full call UI behind a floating pip
   // while keeping the room connected.
   minimized: boolean;
+  // Identities of participants currently producing audio. Driven by
+  // RoomEvent.ActiveSpeakersChanged. For the local participant the value is
+  // `lp.identity` so consumers can use a single lookup key.
+  activeSpeakerIds: Set<string>;
 
   minimize(): void;
   expand(): void;
@@ -159,6 +169,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
     });
     tiles.push({
       participantId: 'local',
+      speakerIdentity: lp.identity || '',
       displayName: lp.name || lp.identity || 'You',
       isLocal: true,
       cameraTrack: localCamera,
@@ -184,6 +195,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
       });
       tiles.push({
         participantId: rp.identity,
+        speakerIdentity: rp.identity,
         displayName: rp.name || rp.identity || 'Participant',
         isLocal: false,
         cameraTrack: cam,
@@ -226,6 +238,13 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
     room.on(RoomEvent.Disconnected, () => {
       refreshParticipants();
     });
+    room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      const ids = new Set<string>();
+      for (const p of speakers) {
+        if (p.identity) ids.add(p.identity);
+      }
+      set({ activeSpeakerIds: ids });
+    });
 
     const url = join.livekitUrl || livekitUrlFromEnv;
     await room.connect(url, join.token);
@@ -247,6 +266,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
     layout: null,
     focusedParticipantId: null,
     minimized: false,
+    activeSpeakerIds: new Set<string>(),
 
     minimize() {
       set({ minimized: true });
@@ -288,6 +308,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
           participants: [],
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
           minimized: false,
+          activeSpeakerIds: new Set<string>(),
         });
         throw err;
       }
@@ -316,6 +337,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
           participants: [],
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
           minimized: false,
+          activeSpeakerIds: new Set<string>(),
         });
         throw err;
       }
@@ -333,6 +355,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         layout: null,
         focusedParticipantId: null,
         minimized: false,
+        activeSpeakerIds: new Set<string>(),
       });
       try {
         await callsClient.leaveGroupCall({ callId });
@@ -354,6 +377,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         layout: null,
         focusedParticipantId: null,
         minimized: false,
+        activeSpeakerIds: new Set<string>(),
       });
       try {
         await callsClient.endGroupCall({ callId });
@@ -491,6 +515,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
                 layout: null,
                 focusedParticipantId: null,
                 minimized: false,
+                activeSpeakerIds: new Set<string>(),
               });
             });
           }
@@ -573,6 +598,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         layout: null,
         focusedParticipantId: null,
         minimized: false,
+        activeSpeakerIds: new Set<string>(),
       });
     },
   };

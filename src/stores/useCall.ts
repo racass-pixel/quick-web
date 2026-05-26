@@ -21,6 +21,7 @@ import { create } from 'zustand';
 import { Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
 import type {
   LocalTrackPublication,
+  Participant,
   RemoteParticipant,
   RemoteTrack,
   RemoteTrackPublication,
@@ -93,6 +94,10 @@ type CallStore = {
   // behind a small floating pip while the Room stays connected and audio
   // keeps flowing. Toggled by the header minimize button / the pip itself.
   minimized: boolean;
+  // Set of LiveKit participant identities currently producing audio. Driven
+  // by RoomEvent.ActiveSpeakersChanged; consumed by the participant tile to
+  // render the speaker ring.
+  activeSpeakerIds: Set<string>;
 
   minimize(): void;
   expand(): void;
@@ -220,6 +225,16 @@ export const useCall = create<CallStore>((set, get) => {
       attachRemoteTracks();
       attachLocalTracks();
     });
+    // Speaker detection: LiveKit emits the full list of currently-audible
+    // participants (local + remote) whenever it changes. We mirror their
+    // identities into the store so each tile can opaquely re-render its ring.
+    room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      const ids = new Set<string>();
+      for (const p of speakers) {
+        if (p.identity) ids.add(p.identity);
+      }
+      set({ activeSpeakerIds: ids });
+    });
 
     // The URL the backend returns wins over the bundled env fallback. Old
     // backends that return an empty string fall back to the env value.
@@ -248,6 +263,7 @@ export const useCall = create<CallStore>((set, get) => {
     remoteAudioTrack: null,
     layout: null,
     minimized: false,
+    activeSpeakerIds: new Set<string>(),
 
     setLayout(layout) {
       set({ layout });
@@ -291,6 +307,7 @@ export const useCall = create<CallStore>((set, get) => {
           state: { kind: 'idle' },
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
           minimized: false,
+          activeSpeakerIds: new Set<string>(),
         });
         throw err;
       }
@@ -326,6 +343,7 @@ export const useCall = create<CallStore>((set, get) => {
           state: { kind: 'idle' },
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
           minimized: false,
+          activeSpeakerIds: new Set<string>(),
         });
         throw err;
       }
@@ -336,7 +354,11 @@ export const useCall = create<CallStore>((set, get) => {
       if (cur.kind !== 'incoming') return;
       clearIncomingTimer();
       const callId = cur.callId;
-      set({ state: { kind: 'idle' }, minimized: false });
+      set({
+        state: { kind: 'idle' },
+        minimized: false,
+        activeSpeakerIds: new Set<string>(),
+      });
       try {
         await callsClient.declineCall({ callId });
       } catch {
@@ -359,6 +381,7 @@ export const useCall = create<CallStore>((set, get) => {
           remoteScreenTrack: null,
           remoteAudioTrack: null,
           minimized: false,
+          activeSpeakerIds: new Set<string>(),
         });
         return;
       }
@@ -373,6 +396,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteScreenTrack: null,
         remoteAudioTrack: null,
         minimized: false,
+        activeSpeakerIds: new Set<string>(),
       });
       try {
         await callsClient.endCall({ callId });
@@ -539,6 +563,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteScreenTrack: null,
         remoteAudioTrack: null,
         minimized: false,
+        activeSpeakerIds: new Set<string>(),
       });
     },
   };

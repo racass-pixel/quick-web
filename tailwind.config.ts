@@ -48,6 +48,18 @@ const config: Config = {
         tight:   'var(--font-tracking-tight)',
         tighter: 'var(--font-tracking-tighter)',
       },
+      keyframes: {
+        // Subtle 2s breathing for the active-speaker ring. Stays at full
+        // opacity most of the cycle so the indicator never appears to "blink
+        // off"; the dip is just enough to read as alive on a static frame.
+        'speaker-pulse': {
+          '0%, 100%': { opacity: '1' },
+          '50%':      { opacity: '0.45' },
+        },
+      },
+      animation: {
+        'speaker-pulse': 'speaker-pulse 2s ease-in-out infinite',
+      },
     },
   },
 };

@@ -126,9 +126,15 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
   const elapsed = isActive ? formatElapsed(now - startedAt) : '00:00';
 
   // Synthesise two tiles for the unified gallery.
+  // The 1:1 store doesn't track LiveKit identities directly, so the local
+  // tile gets the empty key (the active-speaker hook short-circuits on empty)
+  // and the remote tile reuses the peer id, which the backend mints LiveKit
+  // identities from on join. If identities ever drift from user ids the
+  // speaker ring will simply not light up — never a runtime error.
   const tiles: CallParticipantTile[] = [
     {
       participantId: 'local',
+      speakerIdentity: '',
       displayName: 'You',
       isLocal: true,
       cameraTrack: toggles.cameraOn ? localCameraTrack : null,
@@ -138,11 +144,12 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
     },
     {
       participantId: 'remote',
+      speakerIdentity: peer.id,
       displayName: peer.displayName,
       isLocal: false,
       cameraTrack: remoteCameraTrack,
       screenTrack: remoteScreenTrack,
-      // 1:1 still uses the dedicated <audio> outside the tile (line ~172) so
+      // 1:1 still uses the dedicated <audio> outside the tile (below) so
       // we set null here to avoid double-attaching the same track. Group
       // calls populate this field from the participant publication.
       audioTrack: null,
@@ -605,6 +612,20 @@ function FocusedBody({
 // --- Per-tile body. Compact mode strips the name overlay so the strip stays
 // information-dense.
 
+// Subscribe to active-speaker sets from both stores. At any moment only one
+// of them holds a non-empty set (the user is in either a 1:1 or a group
+// call, never both), so a union is safe and avoids threading the result
+// down through every layout branch.
+function useIsSpeaking(identity: string): boolean {
+  const fromOne = useCall((s) =>
+    identity ? s.activeSpeakerIds.has(identity) : false,
+  );
+  const fromGroup = useGroupCall((s) =>
+    identity ? s.activeSpeakerIds.has(identity) : false,
+  );
+  return fromOne || fromGroup;
+}
+
 function ParticipantTileInner({
   tile,
   compact = false,
@@ -615,6 +636,7 @@ function ParticipantTileInner({
   muteOverlay?: boolean;
 }) {
   const track = tile.cameraTrack ?? tile.screenTrack;
+  const speaking = useIsSpeaking(tile.speakerIdentity);
   return (
     <div className="absolute inset-0">
       {track ? (
@@ -642,6 +664,16 @@ function ParticipantTileInner({
             </span>
           )}
         </div>
+      )}
+      {/* Active-speaker indicator. Painted as an inset overlay so it sits on
+          top of the tile's own border and works inside whatever wrapper the
+          layout uses. We set the radius explicitly because the wrappers all
+          use rounded-lg and `inherit` of border-radius is unreliable. */}
+      {speaking && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-lg ring-2 ring-emerald-400 animate-speaker-pulse"
+        />
       )}
     </div>
   );
