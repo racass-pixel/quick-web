@@ -123,6 +123,7 @@ function OneToOneCallStage() {
       isLocal: true,
       cameraTrack: toggles.cameraOn ? localCameraTrack : null,
       screenTrack: localScreenTrack,
+      audioTrack: null, // we don't play our own mic back
       micActive: toggles.micOn,
     },
     {
@@ -131,6 +132,10 @@ function OneToOneCallStage() {
       isLocal: false,
       cameraTrack: remoteCameraTrack,
       screenTrack: remoteScreenTrack,
+      // 1:1 still uses the dedicated <audio> outside the tile (line ~172) so
+      // we set null here to avoid double-attaching the same track. Group
+      // calls populate this field from the participant publication.
+      audioTrack: null,
       micActive: !!remoteAudioTrack,
     },
   ];
