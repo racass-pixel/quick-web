@@ -11,7 +11,7 @@ import type { Message } from '@racass-pixel/quick-protocol';
 import { AlertCircle, Check, CheckCheck, Clock } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
 import { useProfile } from '../../stores/useProfile';
-import type { MessageStatus } from '../../stores/useChats';
+import { useChats, type MessageStatus } from '../../stores/useChats';
 
 export type SenderUserLite = {
   id: string;
@@ -35,6 +35,9 @@ type Props = {
   // read (double tick) / failed (red exclamation). Server messages have no
   // status — they're rendered as `sent` for back-compat.
   status?: MessageStatus;
+  // Conversation id, used to retry a failed send. When provided alongside a
+  // failed own message, clicking anywhere on the bubble re-enqueues it.
+  convId?: string;
 };
 
 function fmtTime(seconds: bigint | undefined, nanos: number | undefined): string {
@@ -54,6 +57,7 @@ export function MessageBubble({
   showAttribution = false,
   senderUser,
   status,
+  convId,
 }: Props) {
   const time = fmtTime(message.createdAt?.seconds, message.createdAt?.nanos);
   const sideClass = isOwn ? 'ml-auto items-end' : 'items-start';
@@ -71,14 +75,15 @@ export function MessageBubble({
           : 'sent';
 
   const isFailed = effectiveStatus === 'failed';
+  const canRetry = isFailed && isOwn && !!convId;
 
   // Own bubble — warm ember tint over the panel. Failed gets a subtle red
-  // border so the recovery affordance is glanceable even before tap-to-retry
-  // is wired up below.
+  // border and (when we can act on it) a pointer cursor to advertise the
+  // tap-to-retry affordance.
   const surfaceClass = isOwn
     ? `bg-[rgba(234,88,12,0.18)] text-ink-1 ${
         isFailed ? 'border border-err/70' : ''
-      }`
+      } ${canRetry ? 'cursor-pointer hover:bg-[rgba(234,88,12,0.26)] transition-colors' : ''}`
     : 'bg-panel text-ink-1';
 
   const showHeader = showAttribution && !isOwn;
@@ -86,6 +91,13 @@ export function MessageBubble({
     senderUser?.displayName ||
     senderUser?.handle ||
     (message.senderId ? `${message.senderId.slice(0, 6)}…` : 'unknown');
+
+  function handleRetry() {
+    if (!canRetry) return;
+    const tempId = (message as Message & { tempId?: string }).tempId;
+    if (!tempId) return;
+    useChats.getState().retrySend(convId!, tempId);
+  }
 
   const bubble = (
     <div className={`group flex flex-col gap-0.5 max-w-[70%] ${sideClass} animate-[bubble-in_200ms_ease-out]`}>
@@ -95,6 +107,10 @@ export function MessageBubble({
         </div>
       )}
       <div
+        onClick={canRetry ? handleRetry : undefined}
+        role={canRetry ? 'button' : undefined}
+        title={canRetry ? 'Tap to retry' : undefined}
+        aria-label={canRetry ? 'Failed message — tap to retry' : undefined}
         className={`rounded-[14px] px-3 py-2 text-[14px] leading-snug whitespace-pre-wrap break-words shadow-sm ${surfaceClass}`}
       >
         <span>{message.body}</span>
