@@ -81,6 +81,12 @@ type GroupCallStore = {
   // Layout choice. `null` means auto-pick from participant count.
   layout: CallLayout | null;
   focusedParticipantId: string | null;
+  // Discord-style minimize: hides the full call UI behind a floating pip
+  // while keeping the room connected.
+  minimized: boolean;
+
+  minimize(): void;
+  expand(): void;
 
   startGroupCall(convId: string): Promise<void>;
   joinGroupCall(callId: string, convId: string): Promise<void>;
@@ -240,6 +246,14 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
     participants: [],
     layout: null,
     focusedParticipantId: null,
+    minimized: false,
+
+    minimize() {
+      set({ minimized: true });
+    },
+    expand() {
+      set({ minimized: false });
+    },
 
     async startGroupCall(convId) {
       if (get().state.kind !== 'none') return;
@@ -273,6 +287,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
           state: { kind: 'none' },
           participants: [],
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
+          minimized: false,
         });
         throw err;
       }
@@ -300,6 +315,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
           state: { kind: 'none' },
           participants: [],
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
+          minimized: false,
         });
         throw err;
       }
@@ -316,6 +332,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         toggles: { micOn: false, cameraOn: false, screenShareOn: false },
         layout: null,
         focusedParticipantId: null,
+        minimized: false,
       });
       try {
         await callsClient.leaveGroupCall({ callId });
@@ -336,6 +353,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         toggles: { micOn: false, cameraOn: false, screenShareOn: false },
         layout: null,
         focusedParticipantId: null,
+        minimized: false,
       });
       try {
         await callsClient.endGroupCall({ callId });
@@ -472,6 +490,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
                 toggles: { micOn: false, cameraOn: false, screenShareOn: false },
                 layout: null,
                 focusedParticipantId: null,
+                minimized: false,
               });
             });
           }
@@ -553,6 +572,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         activeByConv: {},
         layout: null,
         focusedParticipantId: null,
+        minimized: false,
       });
     },
   };

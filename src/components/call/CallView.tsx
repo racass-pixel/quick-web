@@ -20,8 +20,11 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Maximize2,
+  Minimize2,
   Monitor,
+  Phone,
   User,
+  Users,
 } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
 import { Kicker } from '../primitives/Kicker';
@@ -66,13 +69,18 @@ export function CallView() {
   // (the call buttons enforce this) — we route the render accordingly.
   const oneToOneState = useCall((s) => s.state);
   const groupState = useGroupCall((s) => s.state);
+  // Discord-style minimize: when true we render the floating pip alongside
+  // the (hidden) full overlay, so the underlying LiveKit Room stays
+  // connected and audio keeps flowing while the user navigates chats.
+  const oneMinimized = useCall((s) => s.minimized);
+  const groupMinimized = useGroupCall((s) => s.minimized);
 
   const groupActive = groupState.kind === 'active';
   const oneActive =
     oneToOneState.kind === 'active' || oneToOneState.kind === 'ringing-out';
 
-  if (groupActive) return <GroupCallStage />;
-  if (oneActive) return <OneToOneCallStage />;
+  if (groupActive) return <GroupCallStage minimized={groupMinimized} />;
+  if (oneActive) return <OneToOneCallStage minimized={oneMinimized} />;
   return null;
 }
 
@@ -81,7 +89,7 @@ export function CallView() {
 // identical. The 1:1 case has no list of participants — we synthesise two
 // tiles from the per-track refs already exposed by useCall.
 
-function OneToOneCallStage() {
+function OneToOneCallStage({ minimized }: { minimized: boolean }) {
   const state = useCall((s) => s.state);
   const toggles = useCall((s) => s.toggles);
   const layout = useCall((s) => s.layout);
@@ -91,6 +99,8 @@ function OneToOneCallStage() {
   const toggleCamera = useCall((s) => s.toggleCamera);
   const startScreenShare = useCall((s) => s.startScreenShare);
   const stopScreenShare = useCall((s) => s.stopScreenShare);
+  const minimize = useCall((s) => s.minimize);
+  const expand = useCall((s) => s.expand);
   const end = useCall((s) => s.end);
 
   const localCameraTrack = useCall((s) => s.localCameraTrack);
@@ -144,45 +154,67 @@ function OneToOneCallStage() {
   const resolvedLayout: CallLayout = layout ?? pickDefaultLayout(2, hasScreen);
 
   return (
-    <CallShell
-      headerKicker={`${isActive ? 'IN CALL' : 'CALLING'} · ${state.video ? 'VIDEO' : 'AUDIO'}`}
-      headerTitle={peer.displayName}
-      elapsed={elapsed}
-      tiles={tiles}
-      avatarFallback={
-        <div className="flex flex-col items-center">
-          <Avatar
-            displayName={peer.displayName}
-            color={peer.avatarColor ?? ''}
-            size={160}
-          />
-          <div className="mt-6 text-ink-2 text-sm">
-            {isActive ? 'Connected' : 'Ringing…'}
+    <>
+      <CallShell
+        headerKicker={`${isActive ? 'IN CALL' : 'CALLING'} · ${state.video ? 'VIDEO' : 'AUDIO'}`}
+        headerTitle={peer.displayName}
+        elapsed={elapsed}
+        tiles={tiles}
+        avatarFallback={
+          <div className="flex flex-col items-center">
+            <Avatar
+              displayName={peer.displayName}
+              color={peer.avatarColor ?? ''}
+              size={160}
+            />
+            <div className="mt-6 text-ink-2 text-sm">
+              {isActive ? 'Connected' : 'Ringing…'}
+            </div>
           </div>
-        </div>
-      }
-      layout={resolvedLayout}
-      onLayoutChange={setLayout}
-      hasScreen={hasScreen}
-      micOn={toggles.micOn}
-      cameraOn={toggles.cameraOn}
-      screenShareOn={toggles.screenShareOn}
-      onToggleMic={() => void toggleMic()}
-      onToggleCamera={() => void toggleCamera()}
-      onStartScreenShare={(src) => void startScreenShare(src)}
-      onStopScreenShare={() => void stopScreenShare()}
-      onHangup={() => void end()}
-      hangupLabel="Hang up"
-    >
-      <audio ref={remoteAudioRef} autoPlay playsInline />
-    </CallShell>
+        }
+        layout={resolvedLayout}
+        onLayoutChange={setLayout}
+        hasScreen={hasScreen}
+        micOn={toggles.micOn}
+        cameraOn={toggles.cameraOn}
+        screenShareOn={toggles.screenShareOn}
+        onToggleMic={() => void toggleMic()}
+        onToggleCamera={() => void toggleCamera()}
+        onStartScreenShare={(src) => void startScreenShare(src)}
+        onStopScreenShare={() => void stopScreenShare()}
+        onMinimize={minimize}
+        onHangup={() => void end()}
+        hangupLabel="Hang up"
+        minimized={minimized}
+      >
+        {/* Remote mic audio stays mounted INSIDE the (possibly hidden) shell
+            so audio keeps flowing while the user is browsing other chats. */}
+        <audio ref={remoteAudioRef} autoPlay playsInline />
+      </CallShell>
+      {minimized && (
+        <CallPip
+          title={peer.displayName}
+          elapsed={elapsed}
+          group={false}
+          avatarNode={
+            <Avatar
+              displayName={peer.displayName}
+              color={peer.avatarColor ?? ''}
+              size={40}
+            />
+          }
+          onExpand={expand}
+          onEnd={() => void end()}
+        />
+      )}
+    </>
   );
 }
 
 // --- Group call view: pulls the full participant list from useGroupCall and
 // renders the gallery according to the chosen / default layout.
 
-function GroupCallStage() {
+function GroupCallStage({ minimized }: { minimized: boolean }) {
   const state = useGroupCall((s) => s.state);
   const toggles = useGroupCall((s) => s.toggles);
   const layoutOverride = useGroupCall((s) => s.layout);
@@ -194,6 +226,8 @@ function GroupCallStage() {
   const startScreenShare = useGroupCall((s) => s.startScreenShare);
   const stopScreenShare = useGroupCall((s) => s.stopScreenShare);
   const leave = useGroupCall((s) => s.leaveGroupCall);
+  const minimize = useGroupCall((s) => s.minimize);
+  const expand = useGroupCall((s) => s.expand);
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -212,32 +246,50 @@ function GroupCallStage() {
     layoutOverride ?? pickDefaultLayout(count, hasScreen);
 
   return (
-    <CallShell
-      headerKicker={`VOICE CHAT · ${count} ${count === 1 ? 'PARTICIPANT' : 'PARTICIPANTS'}`}
-      headerTitle="Group call"
-      elapsed={elapsed}
-      tiles={participants}
-      avatarFallback={
-        <div className="flex flex-col items-center">
-          <div className="w-40 h-40 rounded-full bg-raised border border-line flex items-center justify-center text-ink-3">
-            <User size={64} strokeWidth={1.25} />
+    <>
+      <CallShell
+        headerKicker={`VOICE CHAT · ${count} ${count === 1 ? 'PARTICIPANT' : 'PARTICIPANTS'}`}
+        headerTitle="Group call"
+        elapsed={elapsed}
+        tiles={participants}
+        avatarFallback={
+          <div className="flex flex-col items-center">
+            <div className="w-40 h-40 rounded-full bg-raised border border-line flex items-center justify-center text-ink-3">
+              <User size={64} strokeWidth={1.25} />
+            </div>
+            <div className="mt-6 text-ink-2 text-sm">Voice chat</div>
           </div>
-          <div className="mt-6 text-ink-2 text-sm">Voice chat</div>
-        </div>
-      }
-      layout={resolvedLayout}
-      onLayoutChange={setLayout}
-      hasScreen={hasScreen}
-      micOn={toggles.micOn}
-      cameraOn={toggles.cameraOn}
-      screenShareOn={toggles.screenShareOn}
-      onToggleMic={() => void toggleMic()}
-      onToggleCamera={() => void toggleCamera()}
-      onStartScreenShare={(src) => void startScreenShare(src)}
-      onStopScreenShare={() => void stopScreenShare()}
-      onHangup={() => void leave()}
-      hangupLabel="Leave call"
-    />
+        }
+        layout={resolvedLayout}
+        onLayoutChange={setLayout}
+        hasScreen={hasScreen}
+        micOn={toggles.micOn}
+        cameraOn={toggles.cameraOn}
+        screenShareOn={toggles.screenShareOn}
+        onToggleMic={() => void toggleMic()}
+        onToggleCamera={() => void toggleCamera()}
+        onStartScreenShare={(src) => void startScreenShare(src)}
+        onStopScreenShare={() => void stopScreenShare()}
+        onMinimize={minimize}
+        onHangup={() => void leave()}
+        hangupLabel="Leave call"
+        minimized={minimized}
+      />
+      {minimized && (
+        <CallPip
+          title="Group call"
+          elapsed={elapsed}
+          group
+          avatarNode={
+            <div className="w-10 h-10 rounded-full bg-raised border border-line flex items-center justify-center text-ink-2">
+              <Users size={18} strokeWidth={1.75} />
+            </div>
+          }
+          onExpand={expand}
+          onEnd={() => void leave()}
+        />
+      )}
+    </>
   );
 }
 
@@ -262,8 +314,13 @@ type CallShellProps = {
   onToggleCamera(): void;
   onStartScreenShare(source: 'monitor' | 'window'): void;
   onStopScreenShare(): void;
+  onMinimize(): void;
   onHangup(): void;
   hangupLabel: string;
+  // When true the shell is hidden via CSS (not unmounted) so the LiveKit
+  // Room and the hidden audio elements stay alive while the user works in
+  // the rest of the app. Unmounting would tear down media tracks.
+  minimized: boolean;
   children?: React.ReactNode;
 };
 
@@ -283,8 +340,20 @@ function CallShell(p: CallShellProps) {
     p.onLayoutChange('focused');
   }
 
+  // Hide-via-CSS so the Room stays connected behind the floating pip. We
+  // also drop pointer events / aria visibility so screen readers and focus
+  // don't reach the offscreen control bar.
+  const hiddenCls = p.minimized
+    ? 'opacity-0 pointer-events-none invisible'
+    : '';
+
   return (
-    <div className="fixed inset-0 z-40 bg-black text-ink-1 flex flex-col">
+    <div
+      className={
+        'fixed inset-0 z-40 bg-black text-ink-1 flex flex-col ' + hiddenCls
+      }
+      aria-hidden={p.minimized || undefined}
+    >
       {p.children}
 
       {/* Audio mixer — one hidden <audio> per participant with a remote mic
@@ -298,8 +367,19 @@ function CallShell(p: CallShellProps) {
           <Kicker className="mb-1">{p.headerKicker}</Kicker>
           <div className="text-ink-1 text-base">{p.headerTitle}</div>
         </div>
-        <div className="font-mono text-ink-2 text-sm tabular-nums">
-          {p.elapsed}
+        <div className="flex items-center gap-4">
+          <div className="font-mono text-ink-2 text-sm tabular-nums">
+            {p.elapsed}
+          </div>
+          <button
+            type="button"
+            onClick={p.onMinimize}
+            aria-label="Minimize call"
+            title="Minimize call"
+            className="w-9 h-9 rounded-full inline-flex items-center justify-center text-ink-2 hover:text-ember hover:bg-raised transition-colors"
+          >
+            <Minimize2 size={18} strokeWidth={1.75} />
+          </button>
         </div>
       </header>
 
@@ -612,6 +692,80 @@ function TrackVideo({
           : 'max-h-full max-w-full object-contain'
       }
     />
+  );
+}
+
+// --- Floating pip rendered while the call is minimized. Clicking anywhere
+// (except the explicit hang-up button) expands the shell back to full screen.
+// The pip is purely a control surface — actual media stays attached inside
+// the (hidden but still mounted) CallShell.
+
+function CallPip({
+  title,
+  elapsed,
+  group,
+  avatarNode,
+  onExpand,
+  onEnd,
+}: {
+  title: string;
+  elapsed: string;
+  group: boolean;
+  avatarNode: React.ReactNode;
+  onExpand(): void;
+  onEnd(): void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label="Return to call"
+      onClick={onExpand}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onExpand();
+        }
+      }}
+      className="fixed bottom-4 right-4 z-50 w-[280px] bg-panel/95 backdrop-blur-md border border-line rounded-2xl shadow-2xl p-3 flex items-center gap-3 cursor-pointer hover:border-ember/60 transition-colors"
+    >
+      <div className="shrink-0">{avatarNode}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-ink-1 text-sm truncate flex items-center gap-1">
+          {title}
+        </div>
+        <div className="font-mono text-ink-3 text-[11px] tabular-nums">
+          {group ? 'Voice chat · ' : ''}
+          {elapsed}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          // The whole pip already expands on click; the green button is a
+          // discoverable affordance for the action.
+          e.stopPropagation();
+          onExpand();
+        }}
+        aria-label="Return to call"
+        title="Return to call"
+        className="shrink-0 w-9 h-9 rounded-full bg-emerald-500 text-bg flex items-center justify-center hover:bg-emerald-400 transition-colors"
+      >
+        <Phone size={16} strokeWidth={2.25} />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEnd();
+        }}
+        aria-label="End call"
+        title="End call"
+        className="shrink-0 w-9 h-9 rounded-full bg-err text-bg flex items-center justify-center hover:opacity-90 transition-opacity"
+      >
+        <HangupIcon />
+      </button>
+    </div>
   );
 }
 

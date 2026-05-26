@@ -89,6 +89,13 @@ type CallStore = {
   // (1:1 is always "single" unless a screen share is active, in which case
   // we default to "screen-only").
   layout: CallLayout | null;
+  // Discord-style minimize: when true, the full-screen CallView is hidden
+  // behind a small floating pip while the Room stays connected and audio
+  // keeps flowing. Toggled by the header minimize button / the pip itself.
+  minimized: boolean;
+
+  minimize(): void;
+  expand(): void;
 
   start(peer: CallPeer, video: boolean): Promise<void>;
   accept(): Promise<void>;
@@ -240,9 +247,17 @@ export const useCall = create<CallStore>((set, get) => {
     remoteScreenTrack: null,
     remoteAudioTrack: null,
     layout: null,
+    minimized: false,
 
     setLayout(layout) {
       set({ layout });
+    },
+
+    minimize() {
+      set({ minimized: true });
+    },
+    expand() {
+      set({ minimized: false });
     },
 
     async start(peer, video) {
@@ -275,6 +290,7 @@ export const useCall = create<CallStore>((set, get) => {
         set({
           state: { kind: 'idle' },
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
+          minimized: false,
         });
         throw err;
       }
@@ -309,6 +325,7 @@ export const useCall = create<CallStore>((set, get) => {
         set({
           state: { kind: 'idle' },
           toggles: { micOn: false, cameraOn: false, screenShareOn: false },
+          minimized: false,
         });
         throw err;
       }
@@ -319,7 +336,7 @@ export const useCall = create<CallStore>((set, get) => {
       if (cur.kind !== 'incoming') return;
       clearIncomingTimer();
       const callId = cur.callId;
-      set({ state: { kind: 'idle' } });
+      set({ state: { kind: 'idle' }, minimized: false });
       try {
         await callsClient.declineCall({ callId });
       } catch {
@@ -341,6 +358,7 @@ export const useCall = create<CallStore>((set, get) => {
           remoteCameraTrack: null,
           remoteScreenTrack: null,
           remoteAudioTrack: null,
+          minimized: false,
         });
         return;
       }
@@ -354,6 +372,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteCameraTrack: null,
         remoteScreenTrack: null,
         remoteAudioTrack: null,
+        minimized: false,
       });
       try {
         await callsClient.endCall({ callId });
@@ -498,6 +517,7 @@ export const useCall = create<CallStore>((set, get) => {
               remoteCameraTrack: null,
               remoteScreenTrack: null,
               remoteAudioTrack: null,
+              minimized: false,
             });
           });
           break;
@@ -518,6 +538,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteCameraTrack: null,
         remoteScreenTrack: null,
         remoteAudioTrack: null,
+        minimized: false,
       });
     },
   };
