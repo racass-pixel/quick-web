@@ -397,6 +397,7 @@ export function ChatThread({ convId }: Props) {
                     isReadByPeer={isReadByPeer}
                     showAttribution={showAttribution}
                     senderUser={senderUser}
+                    status={(m as Message & { status?: 'pending' | 'sent' | 'read' | 'failed' }).status}
                   />
                 </div>
               </Fragment>

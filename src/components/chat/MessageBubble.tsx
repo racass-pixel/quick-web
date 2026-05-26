@@ -8,9 +8,10 @@
 // caption (controlled by `showAttribution`).
 
 import type { Message } from '@racass-pixel/quick-protocol';
-import { Check, CheckCheck } from 'lucide-react';
+import { AlertCircle, Check, CheckCheck, Clock } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
 import { useProfile } from '../../stores/useProfile';
+import type { MessageStatus } from '../../stores/useChats';
 
 export type SenderUserLite = {
   id: string;
@@ -30,6 +31,10 @@ type Props = {
   // The sender's user snapshot, when available. Falls back to a truncated
   // senderId label if missing.
   senderUser?: SenderUserLite;
+  // TG-style local status for own messages: pending (clock) / sent (tick) /
+  // read (double tick) / failed (red exclamation). Server messages have no
+  // status — they're rendered as `sent` for back-compat.
+  status?: MessageStatus;
 };
 
 function fmtTime(seconds: bigint | undefined, nanos: number | undefined): string {
@@ -48,13 +53,32 @@ export function MessageBubble({
   isReadByPeer = false,
   showAttribution = false,
   senderUser,
+  status,
 }: Props) {
   const time = fmtTime(message.createdAt?.seconds, message.createdAt?.nanos);
   const sideClass = isOwn ? 'ml-auto items-end' : 'items-start';
-  // Own bubble — warm ember tint over the panel. Keeps the accent visible
-  // without screaming. Peer — flat panel.
+  // Effective status. Legacy server messages have no `status` — render as
+  // `sent` so the single tick keeps showing. `read` overrides via the
+  // existing isReadByPeer signal so we don't regress S8 behaviour.
+  const effectiveStatus: MessageStatus = !isOwn
+    ? 'sent'
+    : status === 'failed'
+      ? 'failed'
+      : status === 'pending'
+        ? 'pending'
+        : isReadByPeer
+          ? 'read'
+          : 'sent';
+
+  const isFailed = effectiveStatus === 'failed';
+
+  // Own bubble — warm ember tint over the panel. Failed gets a subtle red
+  // border so the recovery affordance is glanceable even before tap-to-retry
+  // is wired up below.
   const surfaceClass = isOwn
-    ? 'bg-[rgba(234,88,12,0.18)] text-ink-1'
+    ? `bg-[rgba(234,88,12,0.18)] text-ink-1 ${
+        isFailed ? 'border border-err/70' : ''
+      }`
     : 'bg-panel text-ink-1';
 
   const showHeader = showAttribution && !isOwn;
@@ -76,12 +100,17 @@ export function MessageBubble({
         <span>{message.body}</span>
         <span className="float-right ml-3 mt-1 inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-ink-3 select-none">
           <span>{time}</span>
-          {isOwn && (
-            isReadByPeer ? (
-              <CheckCheck size={14} strokeWidth={2.25} className="text-ember" aria-label="Read" />
-            ) : (
-              <Check size={14} strokeWidth={2.25} className="text-ink-3" aria-label="Sent" />
-            )
+          {isOwn && effectiveStatus === 'pending' && (
+            <Clock size={14} strokeWidth={2.25} className="text-ink-3" aria-label="Pending" />
+          )}
+          {isOwn && effectiveStatus === 'sent' && (
+            <Check size={14} strokeWidth={2.25} className="text-ink-3" aria-label="Sent" />
+          )}
+          {isOwn && effectiveStatus === 'read' && (
+            <CheckCheck size={14} strokeWidth={2.25} className="text-ember" aria-label="Read" />
+          )}
+          {isOwn && effectiveStatus === 'failed' && (
+            <AlertCircle size={14} strokeWidth={2.25} className="text-err" aria-label="Failed — tap to retry" />
           )}
         </span>
       </div>
