@@ -1,10 +1,6 @@
 // Telegram K-style settings panel. Slides in over the chat list from the
 // left at the same width as the sidebar. Lets the user edit their display
-// name and handle (saved on blur) and exposes a redundant Logout entry.
-//
-// Bio is rendered but disabled — the backend field doesn't exist yet and is
-// being added in a separate change. Same goes for the avatar colour picker:
-// only if the proto exposes the field do we wire one here.
+// name, handle, and bio (saved on blur) and exposes a redundant Logout entry.
 
 import { useEffect, useState } from 'react';
 import { ArrowLeft, LogOut } from 'lucide-react';
@@ -24,8 +20,10 @@ type Props = {
 export function SettingsPanel({ open, user, onClose, onLogout }: Props) {
   const [displayName, setDisplayName] = useState(user.displayName);
   const [handle, setHandle] = useState(user.handle);
+  const [bio, setBio] = useState(user.bio ?? '');
   const [handleError, setHandleError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [bioError, setBioError] = useState<string | null>(null);
 
   // Reset local form state whenever the panel reopens or the underlying
   // user changes — otherwise edits made on the route-level page would be
@@ -34,10 +32,12 @@ export function SettingsPanel({ open, user, onClose, onLogout }: Props) {
     if (open) {
       setDisplayName(user.displayName);
       setHandle(user.handle);
+      setBio(user.bio ?? '');
       setNameError(null);
       setHandleError(null);
+      setBioError(null);
     }
-  }, [open, user.displayName, user.handle]);
+  }, [open, user.displayName, user.handle, user.bio]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +77,22 @@ export function SettingsPanel({ open, user, onClose, onLogout }: Props) {
       if (r.user) setCachedUser(r.user);
     } catch (e: unknown) {
       setHandleError(e instanceof Error ? e.message : 'Handle unavailable.');
+    }
+  }
+
+  async function saveBio() {
+    const next = bio.trim();
+    if (next === (user.bio ?? '')) return;
+    if (next.length > 256) {
+      setBioError('Max 256 characters.');
+      return;
+    }
+    setBioError(null);
+    try {
+      const r = await usersClient.updateProfile({ bio: next });
+      if (r.user) setCachedUser(r.user);
+    } catch (e: unknown) {
+      setBioError(e instanceof Error ? e.message : 'Could not save.');
     }
   }
 
@@ -144,12 +160,22 @@ export function SettingsPanel({ open, user, onClose, onLogout }: Props) {
                 Bio
               </label>
               <textarea
-                disabled
-                title="Coming soon"
-                placeholder="Bio coming soon"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                onBlur={saveBio}
+                maxLength={256}
+                placeholder="A few words about yourself"
                 rows={3}
-                className="w-full bg-raised/40 text-ink-3 placeholder:text-ink-3 border border-line rounded px-3 py-2 text-sm resize-none disabled:cursor-not-allowed"
+                className="w-full bg-raised/40 text-ink-1 placeholder:text-ink-3 border border-line rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-ember transition-colors"
               />
+              {bioError && (
+                <p className="mt-1 text-err text-xs font-mono" role="alert">
+                  {bioError}
+                </p>
+              )}
+              <p className="mt-1 text-[10px] font-mono text-ink-3 text-right">
+                {bio.length}/256
+              </p>
             </div>
           </div>
         </section>

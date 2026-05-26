@@ -88,9 +88,7 @@ export function ProfileModal() {
       : 'Unknown';
   const avatarName = user.displayName || handle || 'Unknown';
 
-  // Bio field doesn't exist on the lite shape yet; guard so this keeps
-  // working once the backend starts emitting it.
-  const bio = ((user as unknown as { bio?: string }).bio ?? '').trim();
+  const bio = ((user as { bio?: string }).bio ?? '').trim();
 
   const statusText = isSelf ? '' : formatPresence(presence);
   const statusOnline = !!presence?.online && !isSelf;
