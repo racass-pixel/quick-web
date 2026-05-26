@@ -78,6 +78,9 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
   const [currentMs, setCurrentMs] = useState(0);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [sizeLabel, setSizeLabel] = useState<string>('—KB');
+  // Surface decode/network failures inline so a silently broken bubble
+  // doesn't look like the user just clicks into the void.
+  const [playError, setPlayError] = useState<string | null>(null);
   // Audio src points at our backend's streaming proxy with the session token
   // in the query string (browsers can't put Authorization on <audio>).
   const playbackURL = useMemo(() => buildPlaybackURL(voice.url), [voice.url]);
@@ -173,10 +176,24 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
         }
       }
       el.playbackRate = SPEEDS[speedIdx];
-      void el.play();
+      setPlayError(null);
+      void el.play().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.warn('[voice] play() rejected', msg);
+        setPlayError("Couldn't play");
+      });
     } else {
       el.pause();
     }
+  }
+
+  function onAudioError() {
+    const el = audioRef.current;
+    const code = el?.error?.code;
+    // eslint-disable-next-line no-console
+    console.warn('[voice] audio error', { code, src: playbackURL });
+    setPlayError("Couldn't play");
   }
 
   function cycleSpeed() {
@@ -283,15 +300,26 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
         {SPEEDS[speedIdx]}x
       </button>
 
+      {playError && (
+        <span
+          role="alert"
+          className="shrink-0 self-start text-[11px] font-mono text-err px-1.5 py-0.5"
+        >
+          {playError}
+        </span>
+      )}
+
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio
         ref={audioRef}
         src={playbackURL}
         preload="metadata"
+        crossOrigin="anonymous"
         onTimeUpdate={onTimeUpdate}
         onPlay={onPlay}
         onPause={onPause}
         onEnded={onEnded}
+        onError={onAudioError}
         className="hidden"
       />
     </div>
