@@ -24,6 +24,12 @@ import {
 import { messagingClient } from '../../api/messaging';
 import { MessageContextMenu } from './MessageContextMenu';
 import { DeleteMessageModal } from './DeleteMessageModal';
+import { VoiceBubble, type VoicePayload } from './VoiceBubble';
+
+// Per-page memo of voice messages we've already reported as played, so a
+// re-render or scroll-back-then-forward doesn't re-fire markVoicePlayed for
+// the same message id.
+const playedReportedIds = new Set<string>();
 
 export type SenderUserLite = {
   id: string;
@@ -254,6 +260,26 @@ export function MessageBubble({
 
   const editedAt = localMsg.editedAt;
   const pinned = !!localMsg.pinnedAt;
+  // Voice attachment, if any. Wire shape is camelCased into LocalMessage by
+  // the WS bridge, but we cast to read it without leaking the type elsewhere.
+  const voice = (message as Message & { voice?: VoicePayload }).voice;
+  const isVoice = !!voice;
+
+  function handleVoiceFirstPlay() {
+    if (!voice) return;
+    if (playedReportedIds.has(message.id)) return;
+    playedReportedIds.add(message.id);
+    // Fire-and-forget — the WS echo will flip the bubble to read state for
+    // both peers, so we don't need to await or optimistically mutate here.
+    void messagingClient
+      .markVoicePlayed({ messageId: message.id })
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn('[voice] markVoicePlayed failed', err);
+        // Roll back so a manual retry on next play works.
+        playedReportedIds.delete(message.id);
+      });
+  }
 
   const bubble = (
     <div
@@ -316,6 +342,29 @@ export function MessageBubble({
                 </button>
               </span>
             </div>
+          </div>
+        ) : isVoice && voice ? (
+          <div className="flex flex-col gap-1">
+            <VoiceBubble
+              voice={voice}
+              isOwn={isOwn}
+              onFirstPlay={handleVoiceFirstPlay}
+            />
+            <span className="self-end inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-ink-3 select-none">
+              <span>{time}</span>
+              {isOwn && effectiveStatus === 'pending' && (
+                <Clock size={14} strokeWidth={2.25} className="text-ink-3" aria-label="Pending" />
+              )}
+              {isOwn && effectiveStatus === 'sent' && (
+                <Check size={14} strokeWidth={2.25} className="text-ink-3" aria-label="Sent" />
+              )}
+              {isOwn && effectiveStatus === 'read' && (
+                <CheckCheck size={14} strokeWidth={2.25} className="text-ember" aria-label="Read" />
+              )}
+              {isOwn && effectiveStatus === 'failed' && (
+                <AlertCircle size={14} strokeWidth={2.25} className="text-err" aria-label="Failed — tap to retry" />
+              )}
+            </span>
           </div>
         ) : (
           <>

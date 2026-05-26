@@ -51,6 +51,14 @@ type WireUser = {
   avatar_color: string;
 };
 
+type WireVoice = {
+  file_id: string;
+  url: string;
+  duration_ms: number;
+  peaks: number[];
+  played?: boolean;
+};
+
 type WireMessage = {
   id: string;
   conversation_id: string;
@@ -62,6 +70,7 @@ type WireMessage = {
   body_revision?: number;
   pinned_at?: string;
   kind?: 'text' | 'service' | 'voice';
+  voice?: WireVoice;
 };
 
 type WireMessageEnv = {
@@ -239,6 +248,18 @@ function wireToMessage(w: WireMessage): LocalMessage {
     bodyRevision: w.body_revision,
     pinnedAt: pinnedMs && !Number.isNaN(pinnedMs) ? pinnedMs : undefined,
     kind: w.kind ?? 'text',
+    // Voice attachment block. Shape mirrors the proto Voice message but uses
+    // camelCase. Reader-specific `played` may be omitted on outgoing-own
+    // messages; default to false.
+    voice: w.voice
+      ? {
+          fileId: w.voice.file_id,
+          url: w.voice.url,
+          durationMs: w.voice.duration_ms,
+          peaks: Array.isArray(w.voice.peaks) ? w.voice.peaks : [],
+          played: !!w.voice.played,
+        }
+      : undefined,
   } as unknown as LocalMessage;
 }
 
