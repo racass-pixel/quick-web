@@ -1,60 +1,64 @@
-// "..." menu shown in the DM header. Hosts:
-//   - Block — calls Users.block on the peer.
-//   - Pin / Unpin conversation — toggles client-side sticky sort.
-//   - Delete chat — opens DeleteConversationModal with the DM persona.
+// "..." menu shown in the header of a group or channel conversation. Hosts:
+//   - Pin / Unpin conversation
+//   - Leave (members)  /  Delete for everyone (owners)
+//
+// "Delete for everyone" is owner-only and routes through the same
+// DeleteConversationModal as the DM path but with the owner persona.
 
 import { useState } from 'react';
-import { MoreVertical, Pin, PinOff, Trash2, UserX } from 'lucide-react';
-import { usersClient } from '../../api/users';
+import { LogOut, MoreVertical, Pin, PinOff, Trash2 } from 'lucide-react';
 import { useChats } from '../../stores/useChats';
 import { DeleteConversationModal } from './DeleteConversationModal';
 
-export function DmHeaderMenu({
-  peerUserId,
-  peerHandle,
-  peerName,
-  conversationId,
-}: {
-  peerUserId: string;
-  peerHandle?: string;
-  peerName?: string;
+type Props = {
   conversationId: string;
-}) {
+  // 'group' | 'channel'
+  convType: 'group' | 'channel';
+  // 'owner' | 'admin' | 'member' | ''
+  myRole: string;
+};
+
+export function ConversationHeaderMenu({
+  conversationId,
+  convType,
+  myRole,
+}: Props) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showDelete, setShowDelete] = useState(false);
+  const [pendingPersona, setPendingPersona] = useState<
+    null | 'leave' | 'delete'
+  >(null);
 
   const pinned = useChats((s) => s.pinnedConvIds.has(conversationId));
   const togglePin = useChats((s) => s.togglePinnedConv);
 
-  async function block() {
-    if (busy) return;
-    const label = peerHandle ? `@${peerHandle}` : 'this user';
-    if (!window.confirm(`Block ${label}? You won't receive their messages.`)) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await usersClient.block({ userId: peerUserId });
-      setOpen(false);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not block.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const isOwner = myRole === 'owner';
 
   async function handleTogglePin() {
     await togglePin(conversationId, !pinned);
     setOpen(false);
   }
 
+  function handleLeave() {
+    setOpen(false);
+    setPendingPersona('leave');
+  }
+
   function handleDelete() {
     setOpen(false);
-    setShowDelete(true);
+    setPendingPersona('delete');
   }
+
+  const persona =
+    pendingPersona === 'delete'
+      ? convType === 'channel'
+        ? 'channel_owner'
+        : 'group_owner'
+      : convType === 'channel'
+        ? 'channel_member'
+        : 'group_member';
+
+  const leaveLabel = convType === 'channel' ? 'Leave channel' : 'Leave group';
+  const deleteLabel = convType === 'channel' ? 'Delete channel' : 'Delete group';
 
   return (
     <div className="relative">
@@ -88,35 +92,31 @@ export function DmHeaderMenu({
             </button>
             <button
               type="button"
-              onClick={block}
-              disabled={busy}
-              className="w-full flex items-center gap-2 px-3 py-2 text-ink-2 hover:text-err hover:bg-raised text-left disabled:opacity-60"
-            >
-              <UserX size={16} />
-              {busy ? 'Blocking…' : 'Block'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
+              onClick={handleLeave}
               className="w-full flex items-center gap-2 px-3 py-2 text-ink-2 hover:text-err hover:bg-raised text-left"
             >
-              <Trash2 size={16} />
-              Delete chat
+              <LogOut size={16} />
+              {leaveLabel}
             </button>
-            {error && (
-              <p className="px-3 py-2 text-err text-xs font-mono" role="alert">
-                {error}
-              </p>
+            {isOwner && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="w-full flex items-center gap-2 px-3 py-2 text-ink-2 hover:text-err hover:bg-raised text-left"
+              >
+                <Trash2 size={16} />
+                {deleteLabel}
+              </button>
             )}
           </div>
         </>
       )}
-      {showDelete && (
+      {pendingPersona && (
         <DeleteConversationModal
           conversationId={conversationId}
-          persona="dm"
-          peerName={peerName ?? (peerHandle ? `@${peerHandle}` : undefined)}
-          onClose={() => setShowDelete(false)}
+          persona={persona}
+          groupOrChannelLabel={convType}
+          onClose={() => setPendingPersona(null)}
         />
       )}
     </div>

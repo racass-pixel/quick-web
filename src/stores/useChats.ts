@@ -197,6 +197,12 @@ type ChatsState = {
   // envelopes with for_everyone=false. ChatThread filters these out.
   deletedForMeMsgIds: Set<string>;
 
+  // Conversation ids that are pinned-to-top by the caller. The backend's
+  // ListConversations already sorts pinned first, but we keep an explicit
+  // local set so UI can show the pin icon + toggle without a roundtrip.
+  pinnedConvIds: Set<string>;
+  togglePinnedConv(convId: string, pin: boolean): Promise<void>;
+
   // WS handlers
   applyMessage(env: WireMessageEnv): void;
   applyRead(env: WireReadEnv): void;
@@ -430,6 +436,28 @@ export const useChats = create<ChatsState>((set, get) => ({
   activeConvId: null,
   currentUserId: null,
   deletedForMeMsgIds: new Set<string>(),
+  pinnedConvIds: new Set<string>(),
+
+  async togglePinnedConv(convId, pin) {
+    // Optimistic update — flip the local pin set immediately so the sidebar
+    // re-renders, then call the RPC. If the call fails we roll back.
+    const prev = get().pinnedConvIds;
+    const next = new Set(prev);
+    if (pin) next.add(convId);
+    else next.delete(convId);
+    set({ pinnedConvIds: next });
+    try {
+      if (pin) {
+        await messagingClient.pinConversation({ conversationId: convId });
+      } else {
+        await messagingClient.unpinConversation({ conversationId: convId });
+      }
+      // Refetch so server-side pinned-first ordering is reflected.
+      void get().loadConversations();
+    } catch {
+      set({ pinnedConvIds: prev });
+    }
+  },
 
   setActiveConv(convId) {
     set((s) => {

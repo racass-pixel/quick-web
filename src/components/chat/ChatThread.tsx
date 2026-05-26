@@ -32,6 +32,7 @@ import { usePresence, formatPresence } from '../../stores/usePresence';
 import { useGroupCall } from '../../stores/useGroupCall';
 import { MembersModal } from '../chats/MembersModal';
 import { DmHeaderMenu } from '../chats/DmHeaderMenu';
+import { ConversationHeaderMenu } from '../chats/ConversationHeaderMenu';
 import { DaySeparator, dayLabel, sameDay } from './DaySeparator';
 
 type Props = {
@@ -436,8 +437,20 @@ export function ChatThread({ convId }: Props) {
                 video={true}
                 iconOnly
               />
-              <DmHeaderMenu peerUserId={conv.peer.id} peerHandle={conv.peer.handle} />
+              <DmHeaderMenu
+                peerUserId={conv.peer.id}
+                peerHandle={conv.peer.handle}
+                peerName={conv.peer.displayName || conv.peer.handle}
+                conversationId={convId}
+              />
             </>
+          )}
+          {(isGroup || isChannel) && (
+            <ConversationHeaderMenu
+              conversationId={convId}
+              convType={isChannel ? 'channel' : 'group'}
+              myRole={conv.myRole}
+            />
           )}
         </div>
       </header>
