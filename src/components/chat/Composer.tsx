@@ -29,10 +29,15 @@ import {
   type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { ChevronLeft, Loader2, Mic, Paperclip, Send, Square } from 'lucide-react';
+import { ChevronLeft, Loader2, Mic, Send, Square } from 'lucide-react';
 import { messagingClient } from '../../api/messaging';
 import { uploadVoiceMessage } from '../../api/voice';
+import { uploadAttachment } from '../../api/media';
 import { startRecording, type RecorderHandle } from '../../lib/voiceRecorder';
+import { AttachButton } from './AttachButton';
+import { UploadProgress, type PendingUpload } from './UploadProgress';
+import { ReplyComposePill } from './ReplyComposePill';
+import { useChats } from '../../stores/useChats';
 
 type Props = {
   onSend: (body: string) => Promise<void> | void;
@@ -42,6 +47,16 @@ type Props = {
   // Conversation id, required for voice messages (the upload + sendVoiceMessage
   // path is handled inside the composer rather than going through onSend).
   conversationId?: string;
+};
+
+// Upload state for a single attachment. Lives outside React state until the
+// upload begins so a fast paperclip-then-cancel doesn't flicker. The PendingUpload
+// shape is what we render in UploadProgress.
+type AttachState = PendingUpload & {
+  fileId?: string;
+  // Abort token — XHR doesn't fit naturally with promises, so we just flip
+  // this and ignore the eventual resolve/reject.
+  cancelled: boolean;
 };
 
 const LINE_HEIGHT_PX = 20;
@@ -71,6 +86,38 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
   const [liveLevel, setLiveLevel] = useState(0);
   const [swipeDx, setSwipeDx] = useState(0);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Attachment state. Each entry tracks a single pending upload; ready
+  // entries carry a `fileId`. On submit we pass the array of file ids.
+  const [attachments, setAttachments] = useState<AttachState[]>([]);
+  const attachmentsRef = useRef<AttachState[]>([]);
+  // Keep a ref in sync so async upload completion callbacks can read the
+  // latest list without stale-closing over the initial empty array.
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  // Reply target subscription. ChatThread populates this when the user picks
+  // Reply from the context menu. We render a quote pill above the input.
+  const replyTargetId = useChats((s) =>
+    conversationId ? s.replyTargetByConv[conversationId] : undefined,
+  );
+  const replyTargetMessage = useChats((s) => {
+    if (!conversationId || !replyTargetId) return undefined;
+    return (s.messages[conversationId] ?? []).find((m) => m.id === replyTargetId);
+  });
+  const replyTargetSenderName = useChats((s) => {
+    if (!replyTargetId) return '';
+    const su = s.senderUserByMsgId[replyTargetId];
+    if (su) return su.displayName || su.handle || 'unknown';
+    const m = replyTargetMessage;
+    if (!m) return 'unknown';
+    return m.senderId ? `${m.senderId.slice(0, 6)}…` : 'unknown';
+  });
+  function clearReplyTarget() {
+    if (!conversationId) return;
+    useChats.getState().setReplyTarget(conversationId, undefined);
+  }
+
   const recorderRef = useRef<RecorderHandle | null>(null);
   const pressStartXRef = useRef<number | null>(null);
   const pointerIdRef = useRef<number | null>(null);
@@ -123,20 +170,84 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
 
   async function submit() {
     const body = value.trim();
-    if (!body || sending || disabled) return;
+    const readyAtts = attachments.filter((a) => a.fileId && !a.cancelled);
+    const stillUploading = attachments.some((a) => !a.fileId && !a.error && !a.cancelled);
+    if (stillUploading) return;
+    const hasAttachments = readyAtts.length > 0;
+    const hasReply = !!replyTargetId;
+    if (sending || disabled) return;
+    if (!body && !hasAttachments) return;
     setSending(true);
     try {
-      await onSend(body);
+      if (hasAttachments || hasReply) {
+        if (!conversationId) return;
+        await useChats.getState().sendRich(conversationId, body, {
+          replyToMessageId: replyTargetId,
+          attachmentFileIds: readyAtts.map((a) => a.fileId!).filter(Boolean),
+        });
+      } else {
+        await onSend(body);
+      }
       setValue('');
+      setAttachments([]);
     } finally {
       setSending(false);
-      // Restore focus so the user can immediately type the next message.
-      // Browsers blur disabled textareas; defer to next tick so React has
-      // already re-enabled the element by the time we focus it.
       requestAnimationFrame(() => {
         ref.current?.focus();
       });
     }
+  }
+
+  function pickFiles(files: File[]) {
+    const additions: AttachState[] = files.map((f) => ({
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: f.name,
+      isImage: f.type.startsWith('image/'),
+      progress: 0,
+      cancelled: false,
+    }));
+    setAttachments((prev) => [...prev, ...additions]);
+    // Kick off uploads in parallel.
+    for (let i = 0; i < additions.length; i++) {
+      const item = additions[i];
+      const file = files[i];
+      void (async () => {
+        try {
+          const res = await uploadAttachment(file, (ev) => {
+            const cur = attachmentsRef.current.find((a) => a.id === item.id);
+            if (!cur || cur.cancelled) return;
+            const p = ev.total > 0 ? ev.loaded / ev.total : 0;
+            setAttachments((prev) =>
+              prev.map((a) => (a.id === item.id ? { ...a, progress: Math.min(0.99, p) } : a)),
+            );
+          });
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === item.id ? { ...a, fileId: res.fileId, progress: 1 } : a,
+            ),
+          );
+        } catch (e: unknown) {
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === item.id
+                ? { ...a, error: e instanceof Error ? e.message : 'upload failed', progress: -1 }
+                : a,
+            ),
+          );
+        }
+      })();
+    }
+  }
+
+  function cancelAttachment(id: string) {
+    setAttachments((prev) => {
+      const next = prev.filter((a) => a.id !== id);
+      // Mark cancelled in the ref too so the upload callback bails out.
+      attachmentsRef.current = attachmentsRef.current.map((a) =>
+        a.id === id ? { ...a, cancelled: true } : a,
+      );
+      return next;
+    });
   }
 
   function handleKeyDown(ev: KeyboardEvent<HTMLTextAreaElement>) {
@@ -282,23 +393,28 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
   }, []);
 
   const hasText = value.trim().length > 0;
+  const readyAttCount = attachments.filter((a) => a.fileId && !a.cancelled).length;
+  const hasAttachments = readyAttCount > 0;
+  const canSend = hasText || hasAttachments;
   const isRecording = phase === 'recording';
   const isUploading = phase === 'uploading';
   const showRecBar = isRecording || isUploading;
   const cancelArmed = swipeDx <= -CANCEL_SWIPE_PX;
 
   return (
-    <div className="border-t border-line bg-bg px-3 py-2">
-      <div className="flex items-end gap-2">
-        <button
-          type="button"
-          aria-label="Attach (coming soon)"
-          title="Attach (coming soon)"
-          disabled
-          className="w-10 h-10 rounded-full flex items-center justify-center text-ink-3 hover:bg-raised transition-colors disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
-        >
-          <Paperclip size={20} strokeWidth={2} />
-        </button>
+    <div className="border-t border-line bg-bg">
+      {replyTargetMessage && conversationId && (
+        <ReplyComposePill
+          message={replyTargetMessage}
+          senderName={replyTargetSenderName}
+          onCancel={clearReplyTarget}
+        />
+      )}
+      {attachments.length > 0 && (
+        <UploadProgress items={attachments} onCancel={cancelAttachment} />
+      )}
+      <div className="px-3 py-2 flex items-end gap-2">
+        <AttachButton onPick={pickFiles} disabled={disabled || !conversationId} />
 
         {showRecBar ? (
           <div className="flex-1 min-h-[44px] rounded-2xl bg-raised border border-transparent px-4 py-2.5 flex items-center gap-3 text-[14px] text-ink-1 overflow-hidden">
@@ -380,7 +496,7 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
                 ? 'bg-err text-bg opacity-100 scale-105'
                 : 'text-ink-3 hover:bg-raised') +
               ' ' +
-              (hasText || isUploading ? 'opacity-0 pointer-events-none' : 'opacity-100')
+              (canSend || isUploading ? 'opacity-0 pointer-events-none' : 'opacity-100')
             }
             style={{ touchAction: 'none' }}
           >
@@ -404,12 +520,12 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
           <button
             type="button"
             onClick={submit}
-            disabled={disabled || sending || !hasText}
+            disabled={disabled || sending || !canSend}
             aria-label="Send"
             title="Send"
             className={
               'absolute inset-0 w-10 h-10 rounded-full flex items-center justify-center bg-ember text-bg hover:bg-ember-soft transition-opacity duration-150 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-ember ' +
-              (hasText ? 'opacity-100' : 'opacity-0 pointer-events-none')
+              (canSend ? 'opacity-100' : 'opacity-0 pointer-events-none')
             }
           >
             <Send size={18} strokeWidth={2.25} className="-ml-0.5" />
@@ -418,11 +534,13 @@ export function Composer({ onSend, onTyping, disabled, placeholder, conversation
       </div>
 
       {voiceError && (
-        <div
-          role="alert"
-          className="mt-2 px-3 py-1.5 rounded-md bg-err/10 border border-err/40 text-err text-[12px] font-mono"
-        >
-          {voiceError}
+        <div className="px-3 pb-2">
+          <div
+            role="alert"
+            className="px-3 py-1.5 rounded-md bg-err/10 border border-err/40 text-err text-[12px] font-mono"
+          >
+            {voiceError}
+          </div>
         </div>
       )}
     </div>

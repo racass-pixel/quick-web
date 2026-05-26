@@ -5,7 +5,8 @@
 // the sidebar; the pencil at the right opens the NewChatMenu popover.
 
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Message } from '@racass-pixel/quick-protocol';
 import { Menu, Pencil, Search } from 'lucide-react';
 import { useAuth } from '../../stores/useAuth';
 import { useChats } from '../../stores/useChats';
@@ -18,6 +19,8 @@ import { NewGroupModal } from './NewGroupModal';
 import { NewChannelModal } from './NewChannelModal';
 import { SidebarMenu } from './SidebarMenu';
 import { SettingsPanel } from '../settings/SettingsPanel';
+import { SearchResults } from '../chat/SearchResults';
+import { messagingClient } from '../../api/messaging';
 
 type ModalKind = 'dm' | 'group' | 'channel' | null;
 
@@ -40,6 +43,40 @@ export function Sidebar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [modal, setModal] = useState<ModalKind>(null);
   const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
+
+  // Global message-search state. We debounce queries >= 2 chars and call
+  // SearchMessages without a conversation_id (so it spans the whole user).
+  const [msgHits, setMsgHits] = useState<Message[]>([]);
+  const [searching, setSearching] = useState(false);
+  const reqIdRef = useRef(0);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setMsgHits([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = window.setTimeout(async () => {
+      const id = ++reqIdRef.current;
+      try {
+        const res = await messagingClient.searchMessages({
+          query: q,
+          conversationId: '',
+          limit: 30,
+          beforeId: '',
+        });
+        if (id !== reqIdRef.current) return;
+        setMsgHits(res.messages ?? []);
+      } catch {
+        if (id !== reqIdRef.current) return;
+        setMsgHits([]);
+      } finally {
+        if (id === reqIdRef.current) setSearching(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [query]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -111,11 +148,42 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Conversation list */}
+      {/* Conversation list — replaced by global search results when the
+          query has 2+ chars. */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {query.trim().length >= 2 ? (
+          <>
+            <div className="px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-wider text-ink-3">
+              Chats
+            </div>
+            {filtered.length === 0 ? (
+              <div className="px-4 py-2 text-ink-3 text-sm">No matching chats.</div>
+            ) : (
+              <ul>
+                {filtered.map((id) => {
+                  const conv = byId[id];
+                  if (!conv) return null;
+                  return (
+                    <li key={id}>
+                      <ConversationRow conv={conv} active={activeId === id} />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-wider text-ink-3">
+              Messages
+            </div>
+            <SearchResults
+              query={query.trim()}
+              hits={msgHits}
+              loading={searching}
+              onHitClick={() => setQuery('')}
+            />
+          </>
+        ) : filtered.length === 0 ? (
           <div className="p-6 text-ink-3 text-sm">
-            {query ? 'No matches.' : 'No conversations yet. Tap the pencil to start one.'}
+            No conversations yet. Tap the pencil to start one.
           </div>
         ) : (
           <ul>

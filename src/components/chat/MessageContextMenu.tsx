@@ -41,6 +41,8 @@ export type MessageContextMenuProps = {
   onClose(): void;
   onStartEdit(): void;
   onAskDelete(): void;
+  onReply(): void;
+  onForward(): void;
 };
 
 type Reader = {
@@ -83,6 +85,8 @@ export function MessageContextMenu(props: MessageContextMenuProps) {
     onClose,
     onStartEdit,
     onAskDelete,
+    onReply,
+    onForward,
   } = props;
 
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -225,7 +229,14 @@ export function MessageContextMenu(props: MessageContextMenuProps) {
       className="fixed z-40 bg-panel border border-line shadow-lg rounded-md py-1 text-sm select-none"
       style={{ left, top, width: PANEL_W }}
     >
-      <MenuItem icon={<CornerUpLeft size={16} />} label="Reply" disabled />
+      <MenuItem
+        icon={<CornerUpLeft size={16} />}
+        label="Reply"
+        onClick={() => {
+          onReply();
+          onClose();
+        }}
+      />
       {canEdit && (
         <MenuItem icon={<Edit3 size={16} />} label="Edit" onClick={startEdit} />
       )}
@@ -247,7 +258,14 @@ export function MessageContextMenu(props: MessageContextMenuProps) {
         label={copyFeedback === 'link' ? 'Copied' : 'Copy Message Link'}
         onClick={copyLink}
       />
-      <MenuItem icon={<Forward size={16} />} label="Forward" disabled />
+      <MenuItem
+        icon={<Forward size={16} />}
+        label="Forward"
+        onClick={() => {
+          onForward();
+          onClose();
+        }}
+      />
       <MenuItem
         icon={<Trash2 size={16} />}
         label="Delete"

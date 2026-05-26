@@ -25,6 +25,14 @@ import { messagingClient } from '../../api/messaging';
 import { MessageContextMenu } from './MessageContextMenu';
 import { DeleteMessageModal } from './DeleteMessageModal';
 import { VoiceBubble, type VoicePayload } from './VoiceBubble';
+import { ReactionStrip } from './ReactionStrip';
+import { ReactionPicker } from './ReactionPicker';
+import { ReplyQuoteBlock } from './ReplyQuoteBlock';
+import { ForwardModal } from './ForwardModal';
+import { ImageBubble } from './ImageBubble';
+import { FileBubble } from './FileBubble';
+import { SmilePlus } from 'lucide-react';
+import type { Reaction, Attachment } from '@racass-pixel/quick-protocol';
 
 // Per-page memo of voice messages we've already reported as played, so a
 // re-render or scroll-back-then-forward doesn't re-fire markVoicePlayed for
@@ -140,7 +148,16 @@ export function MessageBubble({
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [reactionPicker, setReactionPicker] = useState<{ x: number; y: number } | null>(null);
   const editAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+
+  // Pulse highlight when this message is the target of a "scroll to original"
+  // (reply click) or a search hit click. Subscribed via selector for a cheap
+  // re-render on change.
+  const highlightedMsgId = useChats((s) => s.highlightedMsgId);
+  const isHighlighted = highlightedMsgId === message.id;
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
 
@@ -264,6 +281,32 @@ export function MessageBubble({
   // the WS bridge, but we cast to read it without leaking the type elsewhere.
   const voice = (message as Message & { voice?: VoicePayload }).voice;
   const isVoice = !!voice;
+  const replyToId = (message as Message & { replyToMessageId?: string }).replyToMessageId ?? '';
+  const forwardOrigin =
+    (message as Message & { forwardOriginText?: string }).forwardOriginText ?? '';
+  const forwardFromMessageId =
+    (message as Message & { forwardFromMessageId?: string }).forwardFromMessageId ?? '';
+  const isForward = !!forwardFromMessageId && forwardFromMessageId.length > 0;
+  const attachments =
+    ((message as Message & { attachments?: Attachment[] }).attachments as Attachment[] | undefined) ?? [];
+  const reactions =
+    ((message as Message & { reactions?: Reaction[] }).reactions as Reaction[] | undefined) ?? [];
+  const myReactionGlyphs = new Set<string>();
+  if (useChats.getState().currentUserId) {
+    const me = useChats.getState().currentUserId!;
+    for (const r of reactions) if (r.userId === me) myReactionGlyphs.add(r.emoji);
+  }
+
+  function onAddReactionClick(ev: React.MouseEvent<HTMLButtonElement>) {
+    ev.stopPropagation();
+    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    setReactionPicker({ x: rect.left + rect.width / 2, y: rect.top });
+  }
+
+  function handleReply() {
+    if (!convId) return;
+    useChats.getState().setReplyTarget(convId, message.id);
+  }
 
   function handleVoiceFirstPlay() {
     if (!voice) return;
@@ -291,6 +334,7 @@ export function MessageBubble({
         </div>
       )}
       <div
+        ref={bubbleRef}
         onClick={canRetry && !editing ? handleRetry : undefined}
         onContextMenu={onContextMenu}
         onTouchStart={onTouchStart}
@@ -299,7 +343,7 @@ export function MessageBubble({
         role={canRetry ? 'button' : undefined}
         title={canRetry ? 'Tap to retry' : undefined}
         aria-label={canRetry ? 'Failed message — tap to retry' : undefined}
-        className={`relative rounded-[14px] px-3 py-2 text-[14px] leading-snug whitespace-pre-wrap break-words shadow-sm ${surfaceClass}`}
+        className={`relative rounded-[14px] px-3 py-2 text-[14px] leading-snug whitespace-pre-wrap break-words shadow-sm transition-shadow ${surfaceClass} ${isHighlighted ? 'ring-2 ring-ember' : ''}`}
       >
         {pinned && (
           <Pin
@@ -308,6 +352,40 @@ export function MessageBubble({
             className="absolute -top-1 -right-1 text-ember bg-bg rounded-full p-0.5"
             aria-label="Pinned"
           />
+        )}
+        {!editing && isForward && (
+          <div className="text-[11px] font-mono text-ink-3 mb-1 select-none">
+            {forwardOrigin || 'Forwarded message'}
+          </div>
+        )}
+        {!editing && replyToId && convId && (
+          <ReplyQuoteBlock convId={convId} replyToMessageId={replyToId} />
+        )}
+        {!editing && attachments.length > 0 && (
+          <div className="flex flex-col gap-1 mb-1">
+            {attachments.map((a) => {
+              if (a.kind === 'image') {
+                return (
+                  <ImageBubble
+                    key={a.fileId}
+                    url={a.url || ''}
+                    thumbnailUrl={a.thumbnailUrl}
+                    width={a.width}
+                    height={a.height}
+                    filename={a.filename}
+                  />
+                );
+              }
+              return (
+                <FileBubble
+                  key={a.fileId}
+                  url={a.url || ''}
+                  filename={a.filename || 'file'}
+                  sizeBytes={Number(a.sizeBytes ?? 0)}
+                />
+              );
+            })}
+          </div>
         )}
         {editing ? (
           <div className="flex flex-col gap-1">
@@ -368,7 +446,9 @@ export function MessageBubble({
           </div>
         ) : (
           <>
-            <span>{(message as { displayBody?: string }).displayBody || message.body}</span>
+            {((message as { displayBody?: string }).displayBody || message.body) && (
+              <span>{(message as { displayBody?: string }).displayBody || message.body}</span>
+            )}
             <span className="float-right ml-3 mt-1 inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-ink-3 select-none">
               {editedAt && (
                 <span
@@ -394,7 +474,27 @@ export function MessageBubble({
             </span>
           </>
         )}
+        {/* Hover-only floating add-reaction button. Anchored just outside
+            the bubble on the side opposite the message owner. */}
+        {!editing && convId && (
+          <button
+            type="button"
+            onClick={onAddReactionClick}
+            aria-label="Add reaction"
+            title="Add reaction"
+            className={
+              'absolute -top-3 ' +
+              (isOwn ? '-left-3' : '-right-3') +
+              ' w-7 h-7 rounded-full bg-panel border border-line text-ink-2 hover:text-ember hover:border-ember flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm'
+            }
+          >
+            <SmilePlus size={14} strokeWidth={2} />
+          </button>
+        )}
       </div>
+      {reactions.length > 0 && (
+        <ReactionStrip messageId={message.id} reactions={reactions} />
+      )}
     </div>
   );
 
@@ -442,6 +542,23 @@ export function MessageBubble({
           onClose={() => setMenuAnchor(null)}
           onStartEdit={startEditMode}
           onAskDelete={() => setDeleteOpen(true)}
+          onReply={handleReply}
+          onForward={() => setForwardOpen(true)}
+        />
+      )}
+      {reactionPicker && (
+        <ReactionPicker
+          messageId={message.id}
+          myEmojis={myReactionGlyphs}
+          anchor={reactionPicker}
+          onClose={() => setReactionPicker(null)}
+        />
+      )}
+      {forwardOpen && (
+        <ForwardModal
+          sourceMessageId={message.id}
+          sourceConvId={convId}
+          onClose={() => setForwardOpen(false)}
         />
       )}
       {deleteOpen && (

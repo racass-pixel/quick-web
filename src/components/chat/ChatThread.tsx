@@ -25,6 +25,7 @@ import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { ServiceMessage } from './ServiceMessage';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
+import { SearchBar } from './SearchBar';
 import { UnreadDivider } from './UnreadDivider';
 import { useChats, type LocalMessage } from '../../stores/useChats';
 import { useProfile } from '../../stores/useProfile';
@@ -243,6 +244,7 @@ export function ChatThread({ convId }: Props) {
     Array.from(typing).some((uid) => uid !== currentUserId);
 
   const [showMembers, setShowMembers] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // Group voice-chat banner state. The banner is driven entirely by the
   // store so WS envelopes flow through without props plumbing.
@@ -417,10 +419,13 @@ export function ChatThread({ convId }: Props) {
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            aria-label="Search"
-            title="Search (coming soon)"
-            disabled
-            className="w-10 h-10 rounded-full flex items-center justify-center text-ink-3 hover:bg-raised transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Search in this chat"
+            title="Search in this chat"
+            onClick={() => setSearchOpen((v) => !v)}
+            className={
+              'w-10 h-10 rounded-full flex items-center justify-center hover:bg-raised transition-colors ' +
+              (searchOpen ? 'text-ember' : 'text-ink-2 hover:text-ember')
+            }
           >
             <Search size={20} strokeWidth={2} />
           </button>
@@ -475,6 +480,8 @@ export function ChatThread({ convId }: Props) {
           )}
         </div>
       </header>
+
+      {searchOpen && <SearchBar convId={convId} onClose={() => setSearchOpen(false)} />}
 
       {/* Voice-chat banner — sticky-top above the scroller. Visible whenever
           the conversation has an active group call. */}
