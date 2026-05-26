@@ -72,8 +72,26 @@ export function ProfileModal() {
 
   if (!user) return null;
 
-  const displayName = user.displayName || user.handle || 'Unknown';
   const handle = user.handle;
+  // Title resolution: prefer a real display_name. Fall back to @handle so we
+  // never render the raw user-id-looking string when display_name is empty
+  // or accidentally equals the handle (legacy rows). Avatar still uses the
+  // best name available for initials.
+  const hasDistinctDisplayName =
+    !!user.displayName &&
+    user.displayName.trim().length > 0 &&
+    user.displayName !== handle;
+  const titleText = hasDistinctDisplayName
+    ? user.displayName
+    : handle
+      ? `@${handle}`
+      : 'Unknown';
+  const avatarName = user.displayName || handle || 'Unknown';
+
+  // Bio field doesn't exist on the lite shape yet; guard so this keeps
+  // working once the backend starts emitting it.
+  const bio = ((user as unknown as { bio?: string }).bio ?? '').trim();
+
   const statusText = isSelf ? '' : formatPresence(presence);
   const statusOnline = !!presence?.online && !isSelf;
 
@@ -118,7 +136,7 @@ export function ProfileModal() {
 
   async function block() {
     if (!user || busy) return;
-    const label = handle ? `@${handle}` : displayName;
+    const label = handle ? `@${handle}` : titleText;
     setMenuOpen(false);
     if (!window.confirm(`Block ${label}? You won't receive their messages.`)) return;
     setBusy('block');
@@ -148,7 +166,7 @@ export function ProfileModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center px-4">
+    <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4">
       <button
         type="button"
         aria-label="Close profile"
@@ -159,7 +177,7 @@ export function ProfileModal() {
         role="dialog"
         aria-modal="true"
         aria-label="Profile"
-        className="relative bg-panel border border-line rounded-2xl w-[360px] max-w-[90vw] overflow-hidden text-ink-1 shadow-2xl"
+        className="relative bg-panel border border-line rounded-2xl w-[360px] max-w-[90vw] overflow-hidden text-ink-1 shadow-2xl ring-1 ring-ember/10"
       >
         {/* Top-right close */}
         <button
@@ -168,28 +186,33 @@ export function ProfileModal() {
           aria-label="Close"
           className="absolute top-3 right-3 z-10 h-8 w-8 rounded-full flex items-center justify-center text-ink-3 hover:text-ink-1 hover:bg-raised transition-colors"
         >
-          <X size={18} />
+          <X size={18} strokeWidth={2} />
         </button>
 
         {/* Avatar + identity */}
         <div className="pt-8 pb-4 px-6 flex flex-col items-center text-center gap-3">
           <Avatar
-            displayName={displayName}
+            displayName={avatarName}
             color={user.avatarColor}
             size={104}
           />
-          <div className="space-y-1">
-            <div className="text-xl font-medium text-ink-1">
-              {displayName}
+          <div className="space-y-1 w-full">
+            <div className="text-2xl font-semibold text-ink-1 leading-tight text-center break-words line-clamp-2 px-2">
+              {titleText}
             </div>
             {isSelf ? (
               <div className="kicker text-ink-3">This is you</div>
             ) : (
               <div className="text-sm text-ink-3 flex items-center justify-center gap-1.5">
                 {statusOnline && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-ember inline-block" />
+                  <span
+                    className="rounded-full bg-ember inline-block"
+                    style={{ height: 6, width: 6 }}
+                  />
                 )}
-                <span>{statusText}</span>
+                <span className={statusOnline ? 'text-ember' : 'text-ink-3'}>
+                  {statusText}
+                </span>
               </div>
             )}
           </div>
@@ -199,32 +222,35 @@ export function ProfileModal() {
         <div className="px-4 pb-4">
           <div className="grid grid-cols-4 gap-1 bg-raised/40 border border-line rounded-xl p-1">
             <ActionButton
-              icon={<MessageSquare size={20} />}
+              icon={<MessageSquare size={20} strokeWidth={2} />}
               label={busy === 'dm' ? '…' : 'Message'}
               onClick={sendMessage}
               disabled={isSelf || busy !== null}
               hidden={isSelf}
+              active
             />
             <ActionButton
-              icon={<Bell size={20} />}
+              icon={<Bell size={20} strokeWidth={2} />}
               label="Mute"
               disabled
               title="Notifications coming soon"
             />
             <ActionButton
-              icon={<Phone size={20} />}
+              icon={<Phone size={20} strokeWidth={2} />}
               label={busy === 'call' ? '…' : 'Call'}
               onClick={startCall}
               disabled={isSelf || busy !== null}
               hidden={isSelf}
+              active
             />
             <div className="relative">
               <ActionButton
-                icon={<MoreHorizontal size={20} />}
+                icon={<MoreHorizontal size={20} strokeWidth={2} />}
                 label="More"
                 onClick={() => setMenuOpen((v) => !v)}
                 disabled={busy !== null}
                 ariaExpanded={menuOpen}
+                active
               />
               {menuOpen && (
                 <div
@@ -247,7 +273,7 @@ export function ProfileModal() {
                       role="menuitem"
                       onClick={block}
                       disabled={busy !== null}
-                      className="block w-full text-left px-3 py-2 text-err hover:bg-raised transition-colors disabled:opacity-50"
+                      className="block w-full text-left px-3 py-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
                     >
                       Block user
                     </button>
@@ -263,12 +289,18 @@ export function ProfileModal() {
           <div className="border border-line rounded-lg divide-y divide-line">
             <div className="p-4 space-y-1">
               <div className="kicker text-ink-3">Bio</div>
-              <div className="text-sm text-ink-1">No bio yet</div>
+              {bio ? (
+                <div className="text-sm text-ink-1 whitespace-pre-wrap break-words">
+                  {bio}
+                </div>
+              ) : (
+                <div className="text-sm italic text-ink-3">No bio yet</div>
+              )}
             </div>
             {handle && (
               <div className="p-4 flex items-start justify-between gap-3">
-                <div className="space-y-1 min-w-0">
-                  <div className="text-sm font-mono text-ember truncate">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="text-sm font-mono text-ember break-all">
                     @{handle}
                   </div>
                   <div className="kicker text-ink-3">Username</div>
@@ -287,7 +319,7 @@ export function ProfileModal() {
                   aria-label="Copy handle"
                   className="h-8 w-8 shrink-0 rounded-md flex items-center justify-center text-ink-3 hover:text-ember hover:bg-raised transition-colors"
                 >
-                  <Copy size={16} />
+                  <Copy size={16} strokeWidth={2} />
                 </button>
               </div>
             )}
@@ -309,7 +341,7 @@ export function ProfileModal() {
             type="button"
             onClick={block}
             disabled={busy !== null}
-            className="w-full text-err border-t border-line py-3 text-sm font-medium hover:bg-raised transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:bg-raised"
+            className="w-full text-rose-400 hover:text-rose-300 border-t border-line py-3 text-sm font-medium hover:bg-rose-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:bg-rose-500/10"
           >
             {busy === 'block' ? 'Blocking…' : 'Block user'}
           </button>
@@ -328,6 +360,7 @@ function ActionButton({
   hidden,
   title,
   ariaExpanded,
+  active,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -336,12 +369,17 @@ function ActionButton({
   hidden?: boolean;
   title?: string;
   ariaExpanded?: boolean;
+  // active = enabled-and-interactive (ember icon). Inactive (disabled w/o
+  // hidden) renders the icon greyed for the "Mute coming soon" slot.
+  active?: boolean;
 }) {
   // Hidden actions still occupy a column so the grid stays balanced when one
   // of them is removed for self-profile (Message/Call).
   if (hidden) {
     return <div aria-hidden className="h-[60px]" />;
   }
+  const iconTone = active ? 'text-ember' : 'text-ink-3 opacity-60';
+  const labelTone = active ? 'text-ink-2' : 'text-ink-3 opacity-60';
   return (
     <button
       type="button"
@@ -349,10 +387,10 @@ function ActionButton({
       disabled={disabled}
       title={title}
       aria-expanded={ariaExpanded}
-      className="h-[60px] rounded-lg flex flex-col items-center justify-center gap-1 text-ink-1 hover:bg-raised transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent focus:outline-none focus-visible:ring-1 focus-visible:ring-ember"
+      className="h-[60px] w-full rounded-lg flex flex-col items-center justify-center gap-1 text-ink-1 transition-colors duration-150 hover:bg-raised/60 disabled:cursor-not-allowed disabled:hover:bg-transparent focus:outline-none focus-visible:ring-1 focus-visible:ring-ember"
     >
-      <span className="text-ember">{icon}</span>
-      <span className="text-xs text-ink-2">{label}</span>
+      <span className={iconTone}>{icon}</span>
+      <span className={`text-[11px] font-medium ${labelTone}`}>{label}</span>
     </button>
   );
 }
