@@ -84,6 +84,17 @@ export function ChatThread({ convId }: Props) {
     };
   }, [convId, loadAroundUnread, setActiveConv]);
 
+  // Populate the group-call banner immediately on conv open. Without this the
+  // banner only appears after a fresh WS envelope, so a user landing on a
+  // conversation with an already-active voice chat would see nothing until
+  // someone joined or left.
+  useEffect(() => {
+    const c = useChats.getState().byId[convId];
+    if (!c) return;
+    if (c.type !== 'group' && c.type !== 'channel') return;
+    void useGroupCall.getState().refreshActive([convId]);
+  }, [convId]);
+
   // Track scroll position: pinnedToBottom + edge-triggered pagination.
   useEffect(() => {
     const el = scrollerRef.current;
