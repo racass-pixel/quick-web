@@ -148,6 +148,17 @@ type WireMessageUnpinnedEnv = {
   message_id: string;
 };
 
+// S11: server-side echo when a voice message has been played by its
+// recipient. We flip the local `voice.played` flag so the sender's bubble
+// turns grey (read state) and the small unread dot disappears.
+type WireVoicePlayedEnv = {
+  kind: 'voice_played';
+  conversation_id?: string;
+  message_id: string;
+  by_user_id?: string;
+  played_at?: string;
+};
+
 // Minimal user snapshot attached to messages for group attribution rendering
 // (avatar + display name above peer bubbles in groups/channels).
 export type SenderUser = {
@@ -222,6 +233,7 @@ type ChatsState = {
   applyMessageDeleted(env: WireMessageDeletedEnv): void;
   applyMessagePinned(env: WireMessagePinnedEnv): void;
   applyMessageUnpinned(env: WireMessageUnpinnedEnv): void;
+  applyVoicePlayed(env: WireVoicePlayedEnv): void;
 };
 
 // Convert a wire-format message (snake_case + ISO string) to the proto Message
@@ -1093,6 +1105,43 @@ export const useChats = create<ChatsState>((set, get) => ({
     });
   },
 
+  applyVoicePlayed(env) {
+    set((s) => {
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const existing = list[idx] as LocalMessage & {
+          voice?: {
+            fileId: string;
+            url: string;
+            durationMs: number;
+            peaks: number[];
+            played: boolean;
+          };
+        };
+        if (!existing.voice) continue;
+        // Idempotent — already marked played, nothing to do.
+        if (existing.voice.played) continue;
+        const copy = list.slice();
+        copy[idx] = {
+          ...existing,
+          voice: { ...existing.voice, played: true },
+        } as LocalMessage;
+        next[cid] = copy;
+        changed = true;
+        break;
+      }
+      if (!changed) return {};
+      return { messages: next };
+    });
+  },
+
   applyTyping(env) {
     const convId = env.conversation_id;
     const userId = env.by_user_id;
@@ -1189,6 +1238,9 @@ function bridgeWs() {
         break;
       case 'message_unpinned':
         store.applyMessageUnpinned(env as unknown as WireMessageUnpinnedEnv);
+        break;
+      case 'voice_played':
+        store.applyVoicePlayed(env as unknown as WireVoicePlayedEnv);
         break;
       default:
       // ignore unknown kinds; forward-compatible
