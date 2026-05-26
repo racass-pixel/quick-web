@@ -99,10 +99,19 @@ type ChatsState = {
   activeConvId: string | null;
   currentUserId: string | null;
 
+  // Per-conv unread anchor message id — first unread on initial load. Used
+  // by ChatThread to render an UnreadDivider and to set the initial scroll
+  // position when opening a conv with unread messages.
+  unreadAnchorByConv: Record<string, string | undefined>;
+
   setActiveConv(convId: string | null): void;
   setCurrentUserId(id: string | null): void;
   loadConversations(): Promise<void>;
-  loadMessages(convId: string, opts?: { before?: string }): Promise<void>;
+  loadMessages(
+    convId: string,
+    opts?: { before?: string; after?: string; limit?: number },
+  ): Promise<{ inserted: number; hasMore: boolean } | void>;
+  loadAroundUnread(convId: string): Promise<void>;
   send(convId: string, body: string): Promise<void>;
   markRead(convId: string, lastMsgId: string): Promise<void>;
   sendTyping(convId: string): void;
@@ -159,22 +168,30 @@ export const useChats = create<ChatsState>((set, get) => ({
   hasMore: {},
   typing: {},
   lastReadAtByPeer: {},
+  unreadAnchorByConv: {},
   loadingConvs: false,
   loadingMessages: {},
   activeConvId: null,
   currentUserId: null,
 
   setActiveConv(convId) {
-    set({ activeConvId: convId });
-    // Opening a conv resets its unread count locally for snappy UI; server is
-    // told via markRead once we have a last message id.
-    if (convId) {
-      const conv = get().byId[convId];
-      if (conv && conv.unreadCount > 0) {
-        const next = { ...conv, unreadCount: 0 } as Conversation;
-        set((s) => ({ byId: { ...s.byId, [convId]: next } }));
+    set((s) => {
+      // Closing a conv (or switching to a different one) clears the unread
+      // anchor of the previously open thread so reopening recomputes it
+      // against the fresh last_read_at.
+      const prev = s.activeConvId;
+      const next: Partial<ChatsState> = { activeConvId: convId };
+      if (prev && prev !== convId) {
+        const cleared = { ...s.unreadAnchorByConv };
+        delete cleared[prev];
+        next.unreadAnchorByConv = cleared;
       }
-    }
+      return next;
+    });
+    // NB: the unread count is no longer cleared on conv open. The thread
+    // computes its initial scroll anchor from this number, and the count is
+    // decremented optimistically by markRead as the user scrolls past unread
+    // messages (and via the WS read echo from our own MarkRead call).
   },
 
   setCurrentUserId(id) {
@@ -204,18 +221,43 @@ export const useChats = create<ChatsState>((set, get) => ({
       const res = await messagingClient.listMessages({
         conversationId: convId,
         beforeId: opts?.before ?? '',
-        limit: 50,
+        afterId: opts?.after ?? '',
+        limit: opts?.limit ?? 50,
       });
       // Server returns newest-first; we want oldest-first for display.
       const fresh = res.messages.slice().reverse();
+      const isPrepend = !!opts?.before;
+      const isAppend = !!opts?.after;
+      let inserted = 0;
       set((s) => {
         const existing = s.messages[convId] ?? [];
-        const merged = opts?.before ? [...fresh, ...existing] : fresh;
+        let merged: Message[];
+        if (isPrepend) {
+          // De-dupe against existing head (rare but defensive).
+          const existingIds = new Set(existing.map((m) => m.id));
+          const filtered = fresh.filter((m) => !existingIds.has(m.id));
+          merged = [...filtered, ...existing];
+          inserted = filtered.length;
+        } else if (isAppend) {
+          const existingIds = new Set(existing.map((m) => m.id));
+          const filtered = fresh.filter((m) => !existingIds.has(m.id));
+          merged = [...existing, ...filtered];
+          inserted = filtered.length;
+        } else {
+          merged = fresh;
+          inserted = fresh.length;
+        }
+        // `hasMore` tracks whether there are older messages available; only
+        // mutate it on a base/before-fetch.
+        const nextHasMore = isAppend
+          ? s.hasMore
+          : { ...s.hasMore, [convId]: res.hasMore };
         return {
           messages: { ...s.messages, [convId]: merged },
-          hasMore: { ...s.hasMore, [convId]: res.hasMore },
+          hasMore: nextHasMore,
         };
       });
+      return { inserted, hasMore: res.hasMore };
     } finally {
       set((s) => {
         const next = { ...s.loadingMessages };
@@ -223,6 +265,41 @@ export const useChats = create<ChatsState>((set, get) => ({
         return { loadingMessages: next };
       });
     }
+  },
+
+  async loadAroundUnread(convId) {
+    const conv = get().byId[convId];
+    const unread = conv?.unreadCount ?? 0;
+    if (unread <= 0) {
+      // Common case: nothing unread, just load the most recent page and
+      // leave the anchor empty (no divider).
+      await get().loadMessages(convId);
+      set((s) => ({
+        unreadAnchorByConv: { ...s.unreadAnchorByConv, [convId]: undefined },
+      }));
+      return;
+    }
+    // Load enough recent messages to cover all unread + a bit of context.
+    // Backend currently caps the limit at 200.
+    const limit = Math.min(200, Math.max(unread + 10, 50));
+    await get().loadMessages(convId, { limit });
+    // Anchor on the (unread)-th message from the end — the oldest message
+    // the user has not yet read. The exact server-side `last_read_at_for_me`
+    // isn't on the wire yet; this index-based heuristic matches server
+    // ordering and is good enough for the divider position.
+    set((s) => {
+      const msgs = s.messages[convId] ?? [];
+      if (msgs.length === 0) {
+        return {
+          unreadAnchorByConv: { ...s.unreadAnchorByConv, [convId]: undefined },
+        };
+      }
+      const idx = Math.max(0, msgs.length - unread);
+      const anchorId = msgs[idx]?.id;
+      return {
+        unreadAnchorByConv: { ...s.unreadAnchorByConv, [convId]: anchorId },
+      };
+    });
   },
 
   async send(convId, body) {
