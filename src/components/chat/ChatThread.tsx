@@ -23,9 +23,10 @@ import {
 } from '../call/MediaConsentModal';
 import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
+import { ServiceMessage } from './ServiceMessage';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
 import { UnreadDivider } from './UnreadDivider';
-import { useChats } from '../../stores/useChats';
+import { useChats, type LocalMessage } from '../../stores/useChats';
 import { useProfile } from '../../stores/useProfile';
 import { usePresence, formatPresence } from '../../stores/usePresence';
 import { useGroupCall } from '../../stores/useGroupCall';
@@ -521,6 +522,7 @@ export function ChatThread({ convId }: Props) {
             const showAttribution = (isGroup || isChannel) && !isOwn;
             const senderUser = showAttribution ? senderUserByMsgId[m.id] : undefined;
             const isAnchor = unreadAnchorId === m.id;
+            const isService = (m as LocalMessage).kind === 'service';
             return (
               <Fragment key={m.id}>
                 {needsSeparator && day && <DaySeparator label={dayLabel(day)} />}
@@ -528,15 +530,19 @@ export function ChatThread({ convId }: Props) {
                   <UnreadDivider count={dividerCount} />
                 )}
                 <div data-msg-id={m.id} className="flex flex-col">
-                  <MessageBubble
-                    message={m}
-                    isOwn={isOwn}
-                    isReadByPeer={isReadByPeer}
-                    showAttribution={showAttribution}
-                    senderUser={senderUser}
-                    status={(m as Message & { status?: 'pending' | 'sent' | 'read' | 'failed' }).status}
-                    convId={convId}
-                  />
+                  {isService ? (
+                    <ServiceMessage message={m as LocalMessage} />
+                  ) : (
+                    <MessageBubble
+                      message={m}
+                      isOwn={isOwn}
+                      isReadByPeer={isReadByPeer}
+                      showAttribution={showAttribution}
+                      senderUser={senderUser}
+                      status={(m as Message & { status?: 'pending' | 'sent' | 'read' | 'failed' }).status}
+                      convId={convId}
+                    />
+                  )}
                 </div>
               </Fragment>
             );
