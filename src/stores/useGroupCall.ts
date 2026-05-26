@@ -56,6 +56,10 @@ export type CallParticipantTile = {
   // the renderer or the participant is silent — the most common reason a
   // group call "has no sound" is forgetting to plumb this through.
   audioTrack: RemoteTrack | null;
+  // Remote screen-share audio (system / tab audio). Distinct from
+  // `audioTrack` because LiveKit publishes it as its own ScreenShareAudio
+  // source; mixing it with the mic track would make muting one mute the other.
+  screenAudioTrack: RemoteTrack | null;
   micActive: boolean;
 };
 
@@ -175,6 +179,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
       cameraTrack: localCamera,
       screenTrack: localScreen,
       audioTrack: null,                       // we don't play our own mic back
+      screenAudioTrack: null,                 // local screen-share audio bypasses the mixer
       micActive: lp.isMicrophoneEnabled,
     });
 
@@ -184,10 +189,14 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
       let cam: RemoteTrack | null = null;
       let scr: RemoteTrack | null = null;
       let aud: RemoteTrack | null = null;
+      let scrAud: RemoteTrack | null = null;
       let micPub: RemoteTrackPublication | null = null;
       rp.trackPublications.forEach((pub: RemoteTrackPublication) => {
         if (pub.source === Track.Source.Camera) cam = pub.track ?? cam;
         if (pub.source === Track.Source.ScreenShare) scr = pub.track ?? scr;
+        if (pub.source === Track.Source.ScreenShareAudio) {
+          scrAud = pub.track ?? scrAud;
+        }
         if (pub.source === Track.Source.Microphone) {
           micPub = pub;
           aud = pub.track ?? aud;
@@ -201,6 +210,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         cameraTrack: cam,
         screenTrack: scr,
         audioTrack: aud,
+        screenAudioTrack: scrAud,
         micActive: !!micPub && !(micPub as RemoteTrackPublication).isMuted,
       });
     });

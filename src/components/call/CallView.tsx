@@ -108,8 +108,12 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
   const remoteCameraTrack = useCall((s) => s.remoteCameraTrack);
   const remoteScreenTrack = useCall((s) => s.remoteScreenTrack);
   const remoteAudioTrack = useCall((s) => s.remoteAudioTrack);
+  const remoteScreenAudioTrack = useCall((s) => s.remoteScreenAudioTrack);
 
   const remoteAudioRef = useAttached<HTMLAudioElement>(remoteAudioTrack);
+  const remoteScreenAudioRef = useAttached<HTMLAudioElement>(
+    remoteScreenAudioTrack,
+  );
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -140,6 +144,7 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
       cameraTrack: toggles.cameraOn ? localCameraTrack : null,
       screenTrack: localScreenTrack,
       audioTrack: null, // we don't play our own mic back
+      screenAudioTrack: null, // local screen-share audio bypasses the mixer
       micActive: toggles.micOn,
     },
     {
@@ -153,6 +158,7 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
       // we set null here to avoid double-attaching the same track. Group
       // calls populate this field from the participant publication.
       audioTrack: null,
+      screenAudioTrack: null,
       micActive: !!remoteAudioTrack,
     },
   ];
@@ -194,9 +200,12 @@ function OneToOneCallStage({ minimized }: { minimized: boolean }) {
         hangupLabel="Hang up"
         minimized={minimized}
       >
-        {/* Remote mic audio stays mounted INSIDE the (possibly hidden) shell
-            so audio keeps flowing while the user is browsing other chats. */}
+        {/* Remote mic + screen-share audio attached to hidden <audio>s. Both
+            live INSIDE the (possibly hidden) shell so audio keeps flowing
+            while the user is browsing other chats and so the peer's shared-
+            screen system audio is audible alongside their voice. */}
         <audio ref={remoteAudioRef} autoPlay playsInline />
+        <audio ref={remoteScreenAudioRef} autoPlay playsInline />
       </CallShell>
       {minimized && (
         <CallPip
@@ -414,7 +423,7 @@ function CallShell(p: CallShellProps) {
           onClick={p.onToggleCamera}
         />
         <CallControl
-          label={p.screenShareOn ? 'Stop sharing screen' : 'Share screen'}
+          label={p.screenShareOn ? 'Stop sharing screen' : 'Share screen with sound'}
           icon={<Monitor size={20} strokeWidth={1.75} />}
           active={p.screenShareOn}
           onClick={() => {
@@ -423,7 +432,7 @@ function CallShell(p: CallShellProps) {
           }}
         />
         <CallControl
-          label={p.screenShareOn ? 'Stop sharing window' : 'Share window'}
+          label={p.screenShareOn ? 'Stop sharing window' : 'Share window with sound'}
           icon={<AppWindow size={20} strokeWidth={1.75} />}
           active={p.screenShareOn}
           onClick={() => {
@@ -686,17 +695,27 @@ function TrackAudio({ track }: { track: TrackType }) {
   return <audio ref={ref} autoPlay playsInline />;
 }
 
-// AudioMixer renders one hidden <audio> per remote participant's mic track.
-// Lives outside the layout switcher so participants stay audible regardless
-// of which tiles are currently rendered.
+// AudioMixer renders one hidden <audio> per remote participant per audio
+// track they're publishing — both microphone and screen-share (system /
+// tab) audio. Lives outside the layout switcher so participants stay
+// audible regardless of which tiles are currently rendered, and stays
+// mounted while the shell is minimized so the call doesn't go silent.
 function AudioMixer({ tiles }: { tiles: CallParticipantTile[] }) {
   return (
     <div className="sr-only" aria-hidden>
-      {tiles.map((t) =>
-        t.audioTrack ? (
-          <TrackAudio key={`audio-${t.participantId}`} track={t.audioTrack} />
-        ) : null,
-      )}
+      {tiles.map((t) => (
+        <span key={`audio-row-${t.participantId}`}>
+          {t.audioTrack ? (
+            <TrackAudio key={`mic-${t.participantId}`} track={t.audioTrack} />
+          ) : null}
+          {t.screenAudioTrack ? (
+            <TrackAudio
+              key={`scrn-${t.participantId}`}
+              track={t.screenAudioTrack}
+            />
+          ) : null}
+        </span>
+      ))}
     </div>
   );
 }

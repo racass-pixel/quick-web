@@ -86,6 +86,10 @@ type CallStore = {
   remoteCameraTrack: RemoteTrack | null;
   remoteScreenTrack: RemoteTrack | null;
   remoteAudioTrack: RemoteTrack | null;
+  // Remote screen-share audio (system / tab audio). Separate from
+  // remoteAudioTrack so that muting the peer's mic does not also mute the
+  // audio coming through their shared screen.
+  remoteScreenAudioTrack: RemoteTrack | null;
   // Layout override for the CallView. `null` means auto-pick from state
   // (1:1 is always "single" unless a screen share is active, in which case
   // we default to "screen-only").
@@ -171,6 +175,7 @@ export const useCall = create<CallStore>((set, get) => {
     let camera: RemoteTrack | null = null;
     let screen: RemoteTrack | null = null;
     let audio: RemoteTrack | null = null;
+    let screenAudio: RemoteTrack | null = null;
     activeRoom.remoteParticipants.forEach((rp: RemoteParticipant) => {
       rp.trackPublications.forEach((pub: RemoteTrackPublication) => {
         const t = pub.track;
@@ -178,12 +183,14 @@ export const useCall = create<CallStore>((set, get) => {
         if (pub.source === Track.Source.Camera) camera = t;
         if (pub.source === Track.Source.ScreenShare) screen = t;
         if (pub.source === Track.Source.Microphone) audio = t;
+        if (pub.source === Track.Source.ScreenShareAudio) screenAudio = t;
       });
     });
     set({
       remoteCameraTrack: camera,
       remoteScreenTrack: screen,
       remoteAudioTrack: audio,
+      remoteScreenAudioTrack: screenAudio,
     });
   }
 
@@ -261,6 +268,7 @@ export const useCall = create<CallStore>((set, get) => {
     remoteCameraTrack: null,
     remoteScreenTrack: null,
     remoteAudioTrack: null,
+    remoteScreenAudioTrack: null,
     layout: null,
     minimized: false,
     activeSpeakerIds: new Set<string>(),
@@ -380,6 +388,7 @@ export const useCall = create<CallStore>((set, get) => {
           remoteCameraTrack: null,
           remoteScreenTrack: null,
           remoteAudioTrack: null,
+          remoteScreenAudioTrack: null,
           minimized: false,
           activeSpeakerIds: new Set<string>(),
         });
@@ -395,6 +404,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteCameraTrack: null,
         remoteScreenTrack: null,
         remoteAudioTrack: null,
+        remoteScreenAudioTrack: null,
         minimized: false,
         activeSpeakerIds: new Set<string>(),
       });
@@ -562,6 +572,7 @@ export const useCall = create<CallStore>((set, get) => {
         remoteCameraTrack: null,
         remoteScreenTrack: null,
         remoteAudioTrack: null,
+        remoteScreenAudioTrack: null,
         minimized: false,
         activeSpeakerIds: new Set<string>(),
       });
