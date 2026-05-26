@@ -13,9 +13,14 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Message } from '@racass-pixel/quick-protocol';
-import { Search } from 'lucide-react';
+import { PhoneOutgoing, Search } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
 import { CallButton } from '../call/CallButton';
+import {
+  MediaConsentModal,
+  hasMediaConsent,
+  setMediaConsent,
+} from '../call/MediaConsentModal';
 import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
@@ -23,6 +28,7 @@ import { UnreadDivider } from './UnreadDivider';
 import { useChats } from '../../stores/useChats';
 import { useProfile } from '../../stores/useProfile';
 import { usePresence, formatPresence } from '../../stores/usePresence';
+import { useGroupCall } from '../../stores/useGroupCall';
 import { MembersModal } from '../chats/MembersModal';
 import { DmHeaderMenu } from '../chats/DmHeaderMenu';
 import { DaySeparator, dayLabel, sameDay } from './DaySeparator';
@@ -199,6 +205,18 @@ export function ChatThread({ convId }: Props) {
 
   const [showMembers, setShowMembers] = useState(false);
 
+  // Group voice-chat banner state. The banner is driven entirely by the
+  // store so WS envelopes flow through without props plumbing.
+  const activeGroupCall = useGroupCall((s) => s.activeByConv[convId]);
+  const groupCallState = useGroupCall((s) => s.state);
+  const startGroupCall = useGroupCall((s) => s.startGroupCall);
+  const joinGroupCall = useGroupCall((s) => s.joinGroupCall);
+  const leaveGroupCall = useGroupCall((s) => s.leaveGroupCall);
+  const [showGroupCallConsent, setShowGroupCallConsent] = useState<
+    null | { kind: 'start' } | { kind: 'join'; callId: string }
+  >(null);
+  const [groupCallBusy, setGroupCallBusy] = useState(false);
+
   // usePresence must run on every render path (Rules of Hooks); pass undefined
   // when there's no peer (initial loading or non-DM) and the hook no-ops.
   const peerIdForPresence = conv?.peer?.id;
@@ -273,6 +291,54 @@ export function ChatThread({ convId }: Props) {
 
   const showJumpButton = !pinnedToBottom || unreadCount > 0;
 
+  // Group-call helpers — used by both the banner Join button and the small
+  // Phone+ start icon in the header. Both gate on media consent like 1:1 calls.
+  const canStartGroupCall =
+    (isGroup || isChannel) && (conv.myRole === 'owner' || conv.myRole === 'admin');
+  const inThisGroupCall =
+    groupCallState.kind === 'active' &&
+    !!activeGroupCall &&
+    groupCallState.callId === activeGroupCall.id;
+
+  async function fireStartGroupCall() {
+    if (groupCallBusy) return;
+    setGroupCallBusy(true);
+    try {
+      await startGroupCall(convId);
+    } catch {
+      /* swallow — store resets itself on failure */
+    } finally {
+      setGroupCallBusy(false);
+    }
+  }
+  async function fireJoinGroupCall(callId: string) {
+    if (groupCallBusy) return;
+    setGroupCallBusy(true);
+    try {
+      await joinGroupCall(callId, convId);
+    } catch {
+      /* swallow */
+    } finally {
+      setGroupCallBusy(false);
+    }
+  }
+  function handleStartGroupCall() {
+    if (!hasMediaConsent()) {
+      setShowGroupCallConsent({ kind: 'start' });
+      return;
+    }
+    void fireStartGroupCall();
+  }
+  function handleJoinGroupCall() {
+    if (!activeGroupCall) return;
+    const callId = activeGroupCall.id;
+    if (!hasMediaConsent()) {
+      setShowGroupCallConsent({ kind: 'join', callId });
+      return;
+    }
+    void fireJoinGroupCall(callId);
+  }
+
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
       <header className="shrink-0 h-14 border-b border-line px-4 flex items-center gap-3">
@@ -318,6 +384,18 @@ export function ChatThread({ convId }: Props) {
           >
             <Search size={20} strokeWidth={2} />
           </button>
+          {canStartGroupCall && !activeGroupCall && (
+            <button
+              type="button"
+              onClick={handleStartGroupCall}
+              disabled={groupCallBusy || groupCallState.kind !== 'none'}
+              aria-label="Start voice chat"
+              title="Start voice chat"
+              className="w-10 h-10 rounded-full inline-flex items-center justify-center text-ink-2 hover:text-ember hover:bg-raised transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <PhoneOutgoing size={20} strokeWidth={2} />
+            </button>
+          )}
           {isDm && conv.peer && (
             <>
               <CallButton
@@ -345,6 +423,48 @@ export function ChatThread({ convId }: Props) {
           )}
         </div>
       </header>
+
+      {/* Voice-chat banner — sticky-top above the scroller. Visible whenever
+          the conversation has an active group call. */}
+      {(isGroup || isChannel) && activeGroupCall && (
+        <div className="shrink-0 border-b border-line bg-raised px-4 py-2 flex items-center gap-3">
+          <span
+            className="w-2 h-2 rounded-full bg-ember shrink-0"
+            aria-hidden
+          />
+          <div className="flex-1 min-w-0 text-[13px] text-ink-1 truncate">
+            <span className="font-medium">Voice chat</span>
+            <span className="text-ink-3"> · </span>
+            <span className="text-ink-2 font-mono tabular-nums">
+              {activeGroupCall.participantCount}{' '}
+              {activeGroupCall.participantCount === 1 ? 'active' : 'active'}
+            </span>
+          </div>
+          {inThisGroupCall ? (
+            <>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-ember px-2 py-1 border border-ember">
+                You're in
+              </span>
+              <button
+                type="button"
+                onClick={() => void leaveGroupCall()}
+                className="text-[11px] font-mono uppercase tracking-wider text-ink-2 px-2 py-1 border border-line hover:border-ember hover:text-ember transition-colors"
+              >
+                Leave
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={handleJoinGroupCall}
+              disabled={groupCallBusy || groupCallState.kind !== 'none'}
+              className="text-[11px] font-mono uppercase tracking-wider bg-ember text-bg px-3 py-1 border border-ember hover:bg-ember-soft hover:border-ember-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Join
+            </button>
+          )}
+        </div>
+      )}
 
       <div
         ref={scrollerRef}
@@ -440,6 +560,19 @@ export function ChatThread({ convId }: Props) {
           onClose={() => setShowMembers(false)}
         />
       )}
+
+      <MediaConsentModal
+        open={!!showGroupCallConsent}
+        onContinue={() => {
+          setMediaConsent();
+          const pending = showGroupCallConsent;
+          setShowGroupCallConsent(null);
+          if (!pending) return;
+          if (pending.kind === 'start') void fireStartGroupCall();
+          else void fireJoinGroupCall(pending.callId);
+        }}
+        onCancel={() => setShowGroupCallConsent(null)}
+      />
     </div>
   );
 }
