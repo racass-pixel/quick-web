@@ -32,6 +32,7 @@ export type ScreenShareSource = 'monitor' | 'window';
 import type { CallJoin } from '@racass-pixel/quick-protocol';
 import { callsClient } from '../api/calls';
 import type { WsEnvelope } from '../api/ws';
+import type { CallLayout } from './useGroupCall';
 
 export type CallPeer = {
   id: string;
@@ -84,6 +85,10 @@ type CallStore = {
   remoteCameraTrack: RemoteTrack | null;
   remoteScreenTrack: RemoteTrack | null;
   remoteAudioTrack: RemoteTrack | null;
+  // Layout override for the CallView. `null` means auto-pick from state
+  // (1:1 is always "single" unless a screen share is active, in which case
+  // we default to "screen-only").
+  layout: CallLayout | null;
 
   start(peer: CallPeer, video: boolean): Promise<void>;
   accept(): Promise<void>;
@@ -93,6 +98,7 @@ type CallStore = {
   toggleCamera(): Promise<void>;
   startScreenShare(source?: ScreenShareSource): Promise<void>;
   stopScreenShare(): Promise<void>;
+  setLayout(layout: CallLayout | null): void;
   onIncomingCallEnvelope(env: WsEnvelope): void;
 
   // Test/internal helpers — exposed so the modal can be force-dismissed when
@@ -233,6 +239,11 @@ export const useCall = create<CallStore>((set, get) => {
     remoteCameraTrack: null,
     remoteScreenTrack: null,
     remoteAudioTrack: null,
+    layout: null,
+
+    setLayout(layout) {
+      set({ layout });
+    },
 
     async start(peer, video) {
       const cur = get().state;
