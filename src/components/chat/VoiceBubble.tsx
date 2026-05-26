@@ -51,6 +51,18 @@ type Props = {
 const BAR_COUNT = 64;
 const SPEEDS: ReadonlyArray<number> = [1, 1.5, 2];
 
+// Tiny deterministic string hash. Not cryptographic — only used to keep the
+// synthetic placeholder waveform stable per file id so re-renders don't
+// reshuffle the bars.
+function hashStr(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 function fmtMmss(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;
   const totalSec = Math.floor(ms / 1000);
@@ -71,12 +83,34 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
   const playbackURL = useMemo(() => buildPlaybackURL(voice.url), [voice.url]);
 
   // Peaks are 0-255 ints; normalise to 0-1 for height calc. Pad/truncate
-  // to BAR_COUNT to be defensive against malformed inputs.
+  // to BAR_COUNT to be defensive against malformed inputs. When peaks are
+  // missing entirely OR all zero (silent recording, decode failure, legacy
+  // row from before peaks landed), substitute a gentle synthetic waveform so
+  // the bubble still reads as "audio" instead of a flat single line.
   const peaks: number[] = (() => {
     const src = voice.peaks ?? [];
-    if (src.length === BAR_COUNT) return src;
-    const out = new Array<number>(BAR_COUNT).fill(0);
-    for (let i = 0; i < Math.min(src.length, BAR_COUNT); i++) out[i] = src[i];
+    let out: number[];
+    if (src.length === BAR_COUNT) {
+      out = src.slice();
+    } else {
+      out = new Array<number>(BAR_COUNT).fill(0);
+      for (let i = 0; i < Math.min(src.length, BAR_COUNT); i++) out[i] = src[i];
+    }
+    let maxP = 0;
+    for (const v of out) if (v > maxP) maxP = v;
+    if (maxP <= 0) {
+      // Synthetic placeholder: a soft sine envelope with a touch of jitter
+      // derived from the file id (so the same message always renders the
+      // same placeholder, avoiding distracting flicker on re-render).
+      const seed = hashStr(voice.fileId || 'placeholder');
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const t = i / (BAR_COUNT - 1);
+        const env = Math.sin(t * Math.PI); // 0..1..0
+        const jitter = ((seed * (i + 1)) % 31) / 31; // 0..1
+        const v = 60 + env * 110 + jitter * 25; // ~60..195
+        out[i] = Math.round(Math.max(40, Math.min(220, v)));
+      }
+    }
     return out;
   })();
 
