@@ -287,6 +287,12 @@ function CallShell(p: CallShellProps) {
     <div className="fixed inset-0 z-40 bg-black text-ink-1 flex flex-col">
       {p.children}
 
+      {/* Audio mixer — one hidden <audio> per participant with a remote mic
+          track. Lives at the shell level so it stays mounted across layout
+          changes; otherwise switching to single/screen-only would unmount
+          off-screen tiles and silence them. */}
+      <AudioMixer tiles={p.tiles} />
+
       <header className="px-6 py-4 flex items-center justify-between">
         <div>
           <Kicker className="mb-1">{p.headerKicker}</Kicker>
@@ -544,10 +550,9 @@ function ParticipantTileInner({
           </div>
         </div>
       )}
-      {/* Remote audio is invisible but mandatory — without attaching the mic
-          track to a media element the participant is silent. Local tile has
-          audioTrack=null so this no-ops. */}
-      {tile.audioTrack && <TrackAudio track={tile.audioTrack} />}
+      {/* Audio is rendered at the CallShell level (AudioMixer) so participants
+          stay audible across layout changes. Per-tile audio would unmount
+          when the layout hides the tile. */}
       {!compact && !muteOverlay && (
         <div className="absolute left-2 bottom-2 right-2 flex items-center gap-1 text-[11px] text-ink-1 bg-black/55 px-2 py-1 rounded">
           <span className="truncate">{tile.displayName}</span>
@@ -563,10 +568,25 @@ function ParticipantTileInner({
 }
 
 // Hidden audio element wired to a LiveKit track.attach(). Used per remote
-// participant in group calls so every voice is audible.
+// participant so every voice is audible regardless of which tile is visible.
 function TrackAudio({ track }: { track: TrackType }) {
   const ref = useAttached<HTMLAudioElement>(track);
   return <audio ref={ref} autoPlay playsInline />;
+}
+
+// AudioMixer renders one hidden <audio> per remote participant's mic track.
+// Lives outside the layout switcher so participants stay audible regardless
+// of which tiles are currently rendered.
+function AudioMixer({ tiles }: { tiles: CallParticipantTile[] }) {
+  return (
+    <div className="sr-only" aria-hidden>
+      {tiles.map((t) =>
+        t.audioTrack ? (
+          <TrackAudio key={`audio-${t.participantId}`} track={t.audioTrack} />
+        ) : null,
+      )}
+    </div>
+  );
 }
 
 // Stable wrapper around <video> that wires up track.attach() / detach().
