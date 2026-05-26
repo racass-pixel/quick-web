@@ -15,6 +15,8 @@ import { ConnectError, Code } from '@connectrpc/connect';
 import { messagingClient } from '../api/messaging';
 import { ws, type WsEnvelope } from '../api/ws';
 import { LocalStore } from '../store';
+import { keyForConv } from '../crypto/convKeys';
+import { b64decode, decryptText, encryptText } from '../crypto/crypto';
 
 // Local-only wrapper around a proto Message adding TG-style queue metadata.
 // All UI now passes the local shape through, since proto Message is a
@@ -42,6 +44,14 @@ export type LocalMessage = Message & {
   // Tombstone flag — server-side delete-for-everyone. ChatThread filters
   // these out of the rendered list.
   deleted?: boolean;
+  // E2E encryption: when the message was sealed, ciphertext + nonce ride
+  // here. The UI never reads these directly — `displayBody` holds the
+  // decrypted text (or '[encrypted]' on failure).
+  encryptedCiphertext?: Uint8Array;
+  encryptedNonce?: Uint8Array;
+  // Locally-rendered text. For plaintext rows this is just `body`; for
+  // sealed rows it's the AES-GCM-decrypted plaintext.
+  displayBody?: string;
 };
 
 // Wire-side envelope shapes — JSON, not protobuf.
@@ -60,6 +70,13 @@ type WireVoice = {
   played?: boolean;
 };
 
+type WireEncrypted = {
+  // base64-encoded by the server's protojson serializer.
+  ciphertext?: string;
+  nonce?: string;
+  sender_key_id?: string;
+};
+
 type WireMessage = {
   id: string;
   conversation_id: string;
@@ -72,6 +89,7 @@ type WireMessage = {
   pinned_at?: string;
   kind?: 'text' | 'service' | 'voice';
   voice?: WireVoice;
+  encrypted?: WireEncrypted;
 };
 
 type WireMessageEnv = {
@@ -273,7 +291,121 @@ function wireToMessage(w: WireMessage): LocalMessage {
           played: !!w.voice.played,
         }
       : undefined,
+    encryptedCiphertext: w.encrypted?.ciphertext ? b64decode(w.encrypted.ciphertext) : undefined,
+    encryptedNonce: w.encrypted?.nonce ? b64decode(w.encrypted.nonce) : undefined,
+    displayBody: w.body,
   } as unknown as LocalMessage;
+}
+
+// renderedBody helper for UI components — falls through displayBody to body
+// so legacy plaintext keeps working.
+export function renderedBody(m: LocalMessage): string {
+  if (m.displayBody && m.displayBody.length > 0) return m.displayBody;
+  return m.body;
+}
+
+// Best-effort batch decryption of an inbound page. For every sealed row,
+// look up the conv key and replace displayBody with the plaintext. Errors
+// leave the row marked '[encrypted]' so the timeline stays consistent.
+async function decryptPage(convId: string, msgs: LocalMessage[]): Promise<void> {
+  const conv = useChats.getState().byId[convId];
+  if (!conv) return;
+  const sealedIdx: number[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (m.encryptedCiphertext && m.encryptedNonce) sealedIdx.push(i);
+  }
+  if (sealedIdx.length === 0) return;
+  const peerId = conv.peer?.id;
+  let key: CryptoKey | null;
+  try {
+    key = await keyForConv({ convId, convType: conv.type, peerId });
+  } catch {
+    key = null;
+  }
+  const patched: Record<string, string> = {};
+  for (const idx of sealedIdx) {
+    const m = msgs[idx];
+    if (!key) {
+      patched[m.id] = '[encrypted]';
+      continue;
+    }
+    try {
+      const ts = tsMs(m.createdAt as unknown as { seconds: bigint; nanos: number } | undefined);
+      const plaintext = await decryptText(key, m.encryptedCiphertext!, m.encryptedNonce!, {
+        senderId: m.senderId,
+        conversationId: convId,
+        createdAtMs: ts,
+      });
+      patched[m.id] = plaintext;
+    } catch {
+      patched[m.id] = '[encrypted]';
+    }
+  }
+  if (Object.keys(patched).length === 0) return;
+  useChats.setState((s) => {
+    const list = s.messages[convId];
+    if (!list) return {};
+    const next = list.map((m) =>
+      m.id in patched ? ({ ...m, displayBody: patched[m.id] } as LocalMessage) : m,
+    );
+    return { messages: { ...s.messages, [convId]: next } };
+  });
+}
+
+// Encrypt the pending message body under the conversation key. Returns null
+// when no key is available — caller falls back to sending plaintext.
+async function encryptPendingForConv(
+  convId: string,
+  head: LocalMessage,
+): Promise<{ ciphertext: Uint8Array; nonce: Uint8Array } | null> {
+  const conv = useChats.getState().byId[convId];
+  if (!conv) return null;
+  let key: CryptoKey | null;
+  try {
+    key = await keyForConv({ convId, convType: conv.type, peerId: conv.peer?.id });
+  } catch {
+    return null;
+  }
+  if (!key) return null;
+  const senderId = useChats.getState().currentUserId ?? head.senderId ?? '';
+  const ts = head.queuedAt ?? Date.now();
+  try {
+    const box = await encryptText(key, head.body, {
+      senderId,
+      conversationId: convId,
+      createdAtMs: ts,
+    });
+    return { ciphertext: box.ciphertext, nonce: box.nonce };
+  } catch {
+    return null;
+  }
+}
+
+// Decrypt a single inbound (WS) message in-place. Returns a copy with
+// displayBody filled; on failure returns the original.
+async function decryptOne(convId: string, m: LocalMessage): Promise<LocalMessage> {
+  if (!m.encryptedCiphertext || !m.encryptedNonce) return m;
+  const conv = useChats.getState().byId[convId];
+  if (!conv) return m;
+  let key: CryptoKey | null;
+  try {
+    key = await keyForConv({ convId, convType: conv.type, peerId: conv.peer?.id });
+  } catch {
+    key = null;
+  }
+  if (!key) return { ...m, displayBody: '[encrypted]' };
+  try {
+    const ts = tsMs(m.createdAt as unknown as { seconds: bigint; nanos: number } | undefined);
+    const plaintext = await decryptText(key, m.encryptedCiphertext, m.encryptedNonce, {
+      senderId: m.senderId,
+      conversationId: convId,
+      createdAtMs: ts,
+    });
+    return { ...m, displayBody: plaintext };
+  } catch {
+    return { ...m, displayBody: '[encrypted]' };
+  }
 }
 
 function tsMs(ts: { seconds: bigint; nanos: number } | undefined): number {
@@ -414,9 +546,14 @@ function replacePendingWithReal(convId: string, tempId: string, real: Message) {
         nextMsgs = msgs.filter((m) => m.tempId !== tempId);
       } else {
         nextMsgs = msgs.slice();
+        // Overlay the original plaintext into displayBody — when we sent
+        // encrypted, the real row comes back with body='' and we need the
+        // optimistic UI to keep showing what the user wrote.
+        const pending = msgs[idx];
         nextMsgs[idx] = {
           ...(real as LocalMessage),
           status: 'sent',
+          displayBody: pending.body || pending.displayBody || real.body,
         };
       }
     } else {
@@ -606,6 +743,22 @@ export const useChats = create<ChatsState>((set, get) => ({
       });
       // Server returns newest-first; we want oldest-first for display.
       const fresh = res.messages.slice().reverse();
+      // Promote sealed payloads from the proto sub-message to the flat
+      // LocalMessage shape so the rest of the store (and the renderer) can
+      // see them. proto Message has `encrypted: EncryptedPayload?`; we
+      // lift the bytes onto encryptedCiphertext / encryptedNonce and seed
+      // displayBody so the timeline paints with body fallback.
+      for (const m of fresh) {
+        const lm = m as unknown as LocalMessage;
+        const enc = (m as unknown as { encrypted?: { ciphertext?: Uint8Array; nonce?: Uint8Array } }).encrypted;
+        if (enc && enc.ciphertext && enc.nonce) {
+          lm.encryptedCiphertext = enc.ciphertext;
+          lm.encryptedNonce = enc.nonce;
+        }
+        if (lm.displayBody == null) lm.displayBody = lm.body;
+      }
+      // Schedule decryption (fire-and-forget).
+      void decryptPage(convId, fresh as unknown as LocalMessage[]);
       const isPrepend = !!opts?.before;
       // afterIdOverride may have been promoted internally to fill a gap
       // against the disk cache — treat that as an append too, otherwise
@@ -763,10 +916,24 @@ export const useChats = create<ChatsState>((set, get) => ({
           return;
         }
         try {
-          const res = await messagingClient.sendMessage({
-            conversationId: convId,
-            body: head.body,
-          });
+          // Try the encrypted path. Fall back to plaintext when no key is
+          // available (peer hasn't published an identity yet, etc).
+          const sealed = await encryptPendingForConv(convId, head);
+          const res = sealed
+            ? await messagingClient.sendMessage({
+                conversationId: convId,
+                body: '',
+                encrypted: {
+                  $typeName: 'quick.v1.EncryptedPayload',
+                  ciphertext: sealed.ciphertext,
+                  nonce: sealed.nonce,
+                  senderKeyId: '',
+                },
+              })
+            : await messagingClient.sendMessage({
+                conversationId: convId,
+                body: head.body,
+              });
           const real = res.message;
           if (!real) {
             // Shouldn't happen in practice; treat as failed so the user can
@@ -883,13 +1050,17 @@ export const useChats = create<ChatsState>((set, get) => ({
       if (isOwn) {
         const queue = s.queueByConv[convId] ?? [];
         const now = Date.now();
+        // For plaintext sends we match on body. For encrypted sends the
+        // body comes back empty, so we ALSO accept a pending stub whose
+        // body is non-empty and queuedAt is recent — assuming a fresh own-
+        // send arrived sealed.
         const pendingIdx = existing.findIndex(
           (m) =>
             m.tempId &&
             m.status !== 'failed' &&
-            m.body === msg.body &&
             m.queuedAt != null &&
-            now - m.queuedAt < 60_000,
+            now - m.queuedAt < 60_000 &&
+            (m.body === msg.body || (msg.body === '' && m.body.length > 0 && msg.encryptedCiphertext)),
         );
         if (pendingIdx >= 0) {
           const pending = existing[pendingIdx];
@@ -897,6 +1068,7 @@ export const useChats = create<ChatsState>((set, get) => ({
           nextMsgs[pendingIdx] = {
             ...(msg as LocalMessage),
             status: 'sent',
+            displayBody: pending.body || pending.displayBody || msg.body,
           };
           const nextQueue = queue.filter((m) => m.tempId !== pending.tempId);
           persistQueue(convId, nextQueue);
@@ -937,6 +1109,23 @@ export const useChats = create<ChatsState>((set, get) => ({
         conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
       };
     });
+    // If the message was sealed, drain the conv key in the background and
+    // patch displayBody.
+    if (msg.encryptedCiphertext && msg.encryptedNonce) {
+      void (async () => {
+        const decrypted = await decryptOne(convId, msg as LocalMessage);
+        if (decrypted.displayBody === msg.displayBody) return;
+        useChats.setState((s) => {
+          const list = s.messages[convId];
+          if (!list) return {};
+          const idx = list.findIndex((m) => m.id === msg.id);
+          if (idx < 0) return {};
+          const next = list.slice();
+          next[idx] = decrypted;
+          return { messages: { ...s.messages, [convId]: next } };
+        });
+      })();
+    }
   },
 
   applyRead(env) {

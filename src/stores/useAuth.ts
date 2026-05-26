@@ -3,6 +3,7 @@ import type { User } from '@racass-pixel/quick-protocol';
 import { session } from '../api/session';
 import { usersClient } from '../api/users';
 import { LocalStore } from '../store';
+import { ensureIdentityKey, resetConvKeyCache } from '../crypto/convKeys';
 
 // Module-level cache so a remount after the first /me call avoids a flash.
 // undefined = not yet resolved, null = confirmed anonymous, User = signed in.
@@ -47,6 +48,12 @@ export function useAuth() {
         const u = r.user ?? null;
         cachedUser = u;
         setUser(u);
+        // Generate the device's E2E identity keypair on first run and
+        // upload the public half. Best-effort — failure just means the
+        // session uses plaintext until it succeeds on a later boot.
+        if (u && u.id) {
+          void ensureIdentityKey(u.id);
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -69,6 +76,9 @@ export function useAuth() {
       void LocalStore.wipe().catch(() => {
         /* swallow */
       });
+      // Drop derived conv keys; keep the identity keypair on disk so anyone
+      // who already cached the public half stays able to write to us.
+      resetConvKeyCache(null);
     },
   };
 }

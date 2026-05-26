@@ -368,7 +368,7 @@ export function MessageBubble({
           </div>
         ) : (
           <>
-            <span>{message.body}</span>
+            <span>{(message as { displayBody?: string }).displayBody || message.body}</span>
             <span className="float-right ml-3 mt-1 inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-ink-3 select-none">
               {editedAt && (
                 <span
