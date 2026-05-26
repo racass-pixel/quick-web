@@ -20,10 +20,27 @@ import { ws, type WsEnvelope } from '../api/ws';
 // structural type — extra fields don't break the wire side and existing
 // consumers ignore them.
 export type MessageStatus = 'pending' | 'sent' | 'read' | 'failed';
+// Extra wire fields not present on the proto Message yet — they're carried as
+// snake_case JSON on WS envelopes. We add them as optional camelCase props so
+// UI code can read them without casting.
 export type LocalMessage = Message & {
   status?: MessageStatus;
   tempId?: string;
   queuedAt?: number;
+  // Set by the backend when a message has been edited; in ms epoch on the
+  // client side.
+  editedAt?: number;
+  // Monotonic edit counter from the backend; used to ignore out-of-order
+  // edit envelopes if any.
+  bodyRevision?: number;
+  // Pinned-state timestamp (ms epoch). Falsy means not pinned.
+  pinnedAt?: number;
+  // Message kind: 'text' (default) or 'service' (centered pill rendered by
+  // ServiceMessage). 'voice' lands in S11.
+  kind?: 'text' | 'service' | 'voice';
+  // Tombstone flag — server-side delete-for-everyone. ChatThread filters
+  // these out of the rendered list.
+  deleted?: boolean;
 };
 
 // Wire-side envelope shapes — JSON, not protobuf.
@@ -41,6 +58,10 @@ type WireMessage = {
   body: string;
   created_at: string; // ISO timestamp
   sender_user?: WireUser;
+  edited_at?: string;
+  body_revision?: number;
+  pinned_at?: string;
+  kind?: 'text' | 'service' | 'voice';
 };
 
 type WireMessageEnv = {
@@ -82,6 +103,40 @@ type WireConvAddedEnv = {
 type WireConvRemovedEnv = {
   kind: 'conversation_removed';
   conversation_id: string;
+};
+
+// New S10 envelopes — message-level mutation events fanned out by the server
+// after Edit/Delete/Pin/Unpin RPCs land.
+type WireMessageEditedEnv = {
+  kind: 'message_edited';
+  conversation_id?: string;
+  message_id: string;
+  body: string;
+  edited_at: string;
+  body_revision?: number;
+};
+
+type WireMessageDeletedEnv = {
+  kind: 'message_deleted';
+  conversation_id?: string;
+  message_id: string;
+  // true → hard-deleted server-side; false → only the recipient soft-hides it
+  for_everyone: boolean;
+  // Set on for_everyone=false envelopes so we know whose set to update.
+  by_user_id?: string;
+};
+
+type WireMessagePinnedEnv = {
+  kind: 'message_pinned';
+  conversation_id?: string;
+  message_id: string;
+  pinned_at: string;
+};
+
+type WireMessageUnpinnedEnv = {
+  kind: 'message_unpinned';
+  conversation_id?: string;
+  message_id: string;
 };
 
 // Minimal user snapshot attached to messages for group attribution rendering
@@ -138,21 +193,31 @@ type ChatsState = {
   markRead(convId: string, lastMsgId: string): Promise<void>;
   sendTyping(convId: string): void;
 
+  // Per-user "deleted-for-me" message ids. Populated by message_deleted
+  // envelopes with for_everyone=false. ChatThread filters these out.
+  deletedForMeMsgIds: Set<string>;
+
   // WS handlers
   applyMessage(env: WireMessageEnv): void;
   applyRead(env: WireReadEnv): void;
   applyTyping(env: WireTypingEnv): void;
   applyConversationAdded(env: WireConvAddedEnv): void;
   applyConversationRemoved(env: WireConvRemovedEnv): void;
+  applyMessageEdited(env: WireMessageEditedEnv): void;
+  applyMessageDeleted(env: WireMessageDeletedEnv): void;
+  applyMessagePinned(env: WireMessagePinnedEnv): void;
+  applyMessageUnpinned(env: WireMessageUnpinnedEnv): void;
 };
 
 // Convert a wire-format message (snake_case + ISO string) to the proto Message
 // shape consumed by UI components. We materialize a minimal object that
 // satisfies the type — proto Message<"quick.v1.Message"> is a structural type
 // so a plain object with matching fields works.
-function wireToMessage(w: WireMessage): Message {
+function wireToMessage(w: WireMessage): LocalMessage {
   const date = new Date(w.created_at);
   const ms = date.getTime();
+  const editedMs = w.edited_at ? Date.parse(w.edited_at) : undefined;
+  const pinnedMs = w.pinned_at ? Date.parse(w.pinned_at) : undefined;
   return {
     $typeName: 'quick.v1.Message',
     id: w.id,
@@ -164,7 +229,11 @@ function wireToMessage(w: WireMessage): Message {
       seconds: BigInt(Math.floor(ms / 1000)),
       nanos: (ms % 1000) * 1_000_000,
     },
-  } as unknown as Message;
+    editedAt: editedMs && !Number.isNaN(editedMs) ? editedMs : undefined,
+    bodyRevision: w.body_revision,
+    pinnedAt: pinnedMs && !Number.isNaN(pinnedMs) ? pinnedMs : undefined,
+    kind: w.kind ?? 'text',
+  } as unknown as LocalMessage;
 }
 
 function tsMs(ts: { seconds: bigint; nanos: number } | undefined): number {
@@ -360,6 +429,7 @@ export const useChats = create<ChatsState>((set, get) => ({
   loadingMessages: {},
   activeConvId: null,
   currentUserId: null,
+  deletedForMeMsgIds: new Set<string>(),
 
   setActiveConv(convId) {
     set((s) => {
@@ -827,6 +897,153 @@ export const useChats = create<ChatsState>((set, get) => ({
     });
   },
 
+  applyMessageEdited(env) {
+    const editedMs = env.edited_at ? Date.parse(env.edited_at) : Date.now();
+    set((s) => {
+      // We don't know which conv it belongs to a priori — try the hint first,
+      // then fall back to scanning. Threads with thousands of messages aren't
+      // a concern here since edits are rare.
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const existing = list[idx];
+        // Ignore stale revisions (out-of-order delivery).
+        if (
+          env.body_revision != null &&
+          existing.bodyRevision != null &&
+          env.body_revision < existing.bodyRevision
+        ) {
+          continue;
+        }
+        const updated: LocalMessage = {
+          ...existing,
+          body: env.body,
+          editedAt: editedMs,
+          bodyRevision: env.body_revision ?? existing.bodyRevision,
+        };
+        const copy = list.slice();
+        copy[idx] = updated;
+        next[cid] = copy;
+        changed = true;
+        // Also update the conversation preview if this was the last message.
+        const conv = s.byId[cid];
+        if (conv && conv.preview?.id === env.message_id) {
+          const nextConv = {
+            ...conv,
+            preview: { ...conv.preview, body: env.body },
+          } as Conversation;
+          s = { ...s, byId: { ...s.byId, [cid]: nextConv } };
+        }
+        break;
+      }
+      if (!changed) return {};
+      return { messages: next, byId: s.byId };
+    });
+  },
+
+  applyMessageDeleted(env) {
+    set((s) => {
+      const myId = s.currentUserId;
+      if (!env.for_everyone) {
+        // Soft-hide for me only. We rely on `by_user_id` matching our own id;
+        // if absent, assume it's targeted at the receiver (us) regardless.
+        if (env.by_user_id && myId && env.by_user_id !== myId) return {};
+        const nextSet = new Set(s.deletedForMeMsgIds);
+        nextSet.add(env.message_id);
+        return { deletedForMeMsgIds: nextSet };
+      }
+      // Hard delete for everyone — drop the message from its conv list.
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      let touchedConvId: string | null = null;
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const copy = list.slice();
+        copy.splice(idx, 1);
+        next[cid] = copy;
+        changed = true;
+        touchedConvId = cid;
+        break;
+      }
+      if (!changed) return {};
+      // If the deleted message was the conv preview, fall back to the new
+      // last message (if any). The sidebar order doesn't change since
+      // lastMessageAt stays.
+      let nextById = s.byId;
+      if (touchedConvId) {
+        const conv = s.byId[touchedConvId];
+        if (conv && conv.preview?.id === env.message_id) {
+          const list = next[touchedConvId];
+          const newPreview = list.length > 0 ? list[list.length - 1] : undefined;
+          nextById = {
+            ...s.byId,
+            [touchedConvId]: {
+              ...conv,
+              preview: newPreview as Message | undefined,
+            } as Conversation,
+          };
+        }
+      }
+      return { messages: next, byId: nextById };
+    });
+  },
+
+  applyMessagePinned(env) {
+    const pinnedMs = env.pinned_at ? Date.parse(env.pinned_at) : Date.now();
+    set((s) => {
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const copy = list.slice();
+        copy[idx] = { ...copy[idx], pinnedAt: pinnedMs };
+        next[cid] = copy;
+        changed = true;
+        break;
+      }
+      if (!changed) return {};
+      return { messages: next };
+    });
+  },
+
+  applyMessageUnpinned(env) {
+    set((s) => {
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const copy = list.slice();
+        copy[idx] = { ...copy[idx], pinnedAt: undefined };
+        next[cid] = copy;
+        changed = true;
+        break;
+      }
+      if (!changed) return {};
+      return { messages: next };
+    });
+  },
+
   applyTyping(env) {
     const convId = env.conversation_id;
     const userId = env.by_user_id;
@@ -911,6 +1128,18 @@ function bridgeWs() {
         break;
       case 'conversation_removed':
         store.applyConversationRemoved(env as unknown as WireConvRemovedEnv);
+        break;
+      case 'message_edited':
+        store.applyMessageEdited(env as unknown as WireMessageEditedEnv);
+        break;
+      case 'message_deleted':
+        store.applyMessageDeleted(env as unknown as WireMessageDeletedEnv);
+        break;
+      case 'message_pinned':
+        store.applyMessagePinned(env as unknown as WireMessagePinnedEnv);
+        break;
+      case 'message_unpinned':
+        store.applyMessageUnpinned(env as unknown as WireMessageUnpinnedEnv);
         break;
       default:
       // ignore unknown kinds; forward-compatible

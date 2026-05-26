@@ -48,7 +48,12 @@ const EMPTY_MESSAGES: Message[] = [];
 
 export function ChatThread({ convId }: Props) {
   const conv = useChats((s) => s.byId[convId]);
-  const messages = useChats((s) => s.messages[convId] ?? EMPTY_MESSAGES);
+  const rawMessages = useChats((s) => s.messages[convId] ?? EMPTY_MESSAGES);
+  const deletedForMe = useChats((s) => s.deletedForMeMsgIds);
+  // Filter out soft-deleted-for-me messages. Cheap O(n) and rare in practice.
+  const messages = deletedForMe.size === 0
+    ? rawMessages
+    : rawMessages.filter((m) => !deletedForMe.has(m.id));
   const typing = useChats((s) => s.typing[convId]);
   const currentUserId = useChats((s) => s.currentUserId);
   const lastReadAtByPeer = useChats((s) => s.lastReadAtByPeer[convId] ?? 0);
