@@ -14,6 +14,8 @@
     "@bufbuild/protobuf": "^2.12.0",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-web": "^2.1.1",
+    "@noble/curves": "^1.7.0",
+    "@noble/hashes": "^1.6.1",
     "@racass-pixel/quick-protocol": "file:../quick-protocol/gen/ts",
     "@racass-pixel/quick-tokens": "file:../quick-backend/design-tokens",
     "@tanstack/react-router": "^1.170.8",
