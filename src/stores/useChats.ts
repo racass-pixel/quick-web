@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import type {
   Conversation,
   Message,
+  Reaction,
 } from '@racass-pixel/quick-protocol';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { messagingClient } from '../api/messaging';
@@ -77,6 +78,23 @@ type WireEncrypted = {
   sender_key_id?: string;
 };
 
+type WireReaction = {
+  user_id: string;
+  emoji: string;
+};
+
+type WireAttachment = {
+  file_id: string;
+  kind: string;
+  mime: string;
+  size_bytes?: number | string;
+  width?: number;
+  height?: number;
+  url?: string;
+  thumbnail_url?: string;
+  filename?: string;
+};
+
 type WireMessage = {
   id: string;
   conversation_id: string;
@@ -90,6 +108,12 @@ type WireMessage = {
   kind?: 'text' | 'service' | 'voice';
   voice?: WireVoice;
   encrypted?: WireEncrypted;
+  reply_to_message_id?: string;
+  reactions?: WireReaction[];
+  forward_from_user_id?: string;
+  forward_from_message_id?: string;
+  forward_origin_text?: string;
+  attachments?: WireAttachment[];
 };
 
 type WireMessageEnv = {
@@ -165,6 +189,17 @@ type WireMessageUnpinnedEnv = {
   kind: 'message_unpinned';
   conversation_id?: string;
   message_id: string;
+};
+
+// S13: reaction lifecycle envelopes. Both kinds share the same minimal shape —
+// a (message_id, user_id, emoji) tuple, optionally accompanied by a
+// conversation_id hint for fast lookups.
+type WireReactionEnv = {
+  kind: 'reaction_added' | 'reaction_removed';
+  conversation_id?: string;
+  message_id: string;
+  user_id: string;
+  emoji: string;
 };
 
 // S11: server-side echo when a voice message has been played by its
@@ -253,6 +288,30 @@ type ChatsState = {
   applyMessagePinned(env: WireMessagePinnedEnv): void;
   applyMessageUnpinned(env: WireMessageUnpinnedEnv): void;
   applyVoicePlayed(env: WireVoicePlayedEnv): void;
+  applyReaction(env: WireReactionEnv): void;
+
+  // S13: composer reply target per conversation. UI sets/clears via
+  // setReplyTarget; send() picks it up and passes reply_to_message_id.
+  replyTargetByConv: Record<string, string | undefined>;
+  setReplyTarget(convId: string, messageId: string | undefined): void;
+
+  // S13: send a message with optional reply + attachments. Bypasses the
+  // outbox queue for simplicity — pending state is rendered optimistically
+  // but the request goes out immediately. Errors surface to the caller.
+  sendRich(
+    convId: string,
+    body: string,
+    opts: { replyToMessageId?: string; attachmentFileIds?: string[] },
+  ): Promise<void>;
+
+  // S13: forward a message to a target conversation. Server returns the new
+  // message; we let the WS echo render it (or fall back to a soft refetch).
+  forwardMessage(sourceMessageId: string, targetConversationId: string): Promise<void>;
+
+  // S13: per-message scroll-to + highlight pulse. Components subscribe to
+  // `highlightedMsgId` to drive a temporary outline.
+  highlightedMsgId: string | null;
+  pulseMessage(messageId: string): void;
 };
 
 // Convert a wire-format message (snake_case + ISO string) to the proto Message
@@ -294,6 +353,34 @@ function wireToMessage(w: WireMessage): LocalMessage {
     encryptedCiphertext: w.encrypted?.ciphertext ? b64decode(w.encrypted.ciphertext) : undefined,
     encryptedNonce: w.encrypted?.nonce ? b64decode(w.encrypted.nonce) : undefined,
     displayBody: w.body,
+    replyToMessageId: w.reply_to_message_id ?? '',
+    reactions: Array.isArray(w.reactions)
+      ? w.reactions.map((r) => ({
+          $typeName: 'quick.v1.Reaction',
+          userId: r.user_id,
+          emoji: r.emoji,
+        }))
+      : [],
+    forwardFromUserId: w.forward_from_user_id ?? '',
+    forwardFromMessageId: w.forward_from_message_id ?? '',
+    forwardOriginText: w.forward_origin_text ?? '',
+    attachments: Array.isArray(w.attachments)
+      ? w.attachments.map((a) => ({
+          $typeName: 'quick.v1.Attachment',
+          fileId: a.file_id,
+          kind: a.kind,
+          mime: a.mime,
+          sizeBytes:
+            typeof a.size_bytes === 'string'
+              ? BigInt(a.size_bytes)
+              : BigInt(a.size_bytes ?? 0),
+          width: a.width ?? 0,
+          height: a.height ?? 0,
+          url: a.url ?? '',
+          thumbnailUrl: a.thumbnail_url ?? '',
+          filename: a.filename ?? '',
+        }))
+      : [],
   } as unknown as LocalMessage;
 }
 
@@ -615,6 +702,118 @@ export const useChats = create<ChatsState>((set, get) => ({
   currentUserId: null,
   deletedForMeMsgIds: new Set<string>(),
   pinnedConvIds: new Set<string>(),
+  replyTargetByConv: {},
+  highlightedMsgId: null,
+
+  setReplyTarget(convId, messageId) {
+    set((s) => ({
+      replyTargetByConv: { ...s.replyTargetByConv, [convId]: messageId },
+    }));
+  },
+
+  async sendRich(convId, body, opts) {
+    const trimmed = body.trim();
+    const attachmentFileIds = opts.attachmentFileIds ?? [];
+    if (!trimmed && attachmentFileIds.length === 0) return;
+    try {
+      const res = await messagingClient.sendMessage({
+        conversationId: convId,
+        body: trimmed,
+        replyToMessageId: opts.replyToMessageId ?? '',
+        attachmentFileIds,
+      });
+      const real = res.message;
+      if (real) {
+        // Eagerly insert the server-canonical message so the user sees it
+        // immediately. The WS echo will be deduped by id.
+        set((s) => {
+          const existing = s.messages[convId] ?? [];
+          if (existing.some((m) => m.id === real.id)) return {};
+          const lm = real as LocalMessage;
+          if (lm.displayBody == null) lm.displayBody = lm.body;
+          const conv = s.byId[convId];
+          const nextConv = conv
+            ? ({ ...conv, lastMessageAt: real.createdAt, preview: real } as Conversation)
+            : conv;
+          const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
+          return {
+            messages: { ...s.messages, [convId]: [...existing, lm] },
+            byId: nextById,
+            conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
+          };
+        });
+      }
+    } finally {
+      // Clear reply target regardless of outcome — the user can retry
+      // from history if it failed.
+      set((s) => {
+        const next = { ...s.replyTargetByConv };
+        delete next[convId];
+        return { replyTargetByConv: next };
+      });
+    }
+  },
+
+  async forwardMessage(sourceMessageId, targetConversationId) {
+    await messagingClient.forwardMessage({
+      sourceMessageId,
+      targetConversationId,
+    });
+    // Server returns the new message; WS echo will render it. No-op here.
+  },
+
+  pulseMessage(messageId) {
+    set({ highlightedMsgId: messageId });
+    // Clear after 1s so subsequent clicks on the same message re-pulse.
+    setTimeout(() => {
+      const cur = useChats.getState().highlightedMsgId;
+      if (cur === messageId) useChats.setState({ highlightedMsgId: null });
+    }, 1100);
+  },
+
+  applyReaction(env) {
+    set((s) => {
+      const targetConvId = env.conversation_id;
+      const next: Record<string, LocalMessage[]> = { ...s.messages };
+      let changed = false;
+      const convIds = targetConvId ? [targetConvId] : Object.keys(next);
+      for (const cid of convIds) {
+        const list = next[cid];
+        if (!list) continue;
+        const idx = list.findIndex((m) => m.id === env.message_id);
+        if (idx < 0) continue;
+        const existing = list[idx];
+        const cur: Reaction[] = (existing.reactions as Reaction[] | undefined) ?? [];
+        let nextReactions: Reaction[];
+        if (env.kind === 'reaction_added') {
+          // Dedupe by (user_id, emoji).
+          if (cur.some((r) => r.userId === env.user_id && r.emoji === env.emoji)) {
+            return {};
+          }
+          nextReactions = [
+            ...cur,
+            {
+              $typeName: 'quick.v1.Reaction',
+              userId: env.user_id,
+              emoji: env.emoji,
+            } as Reaction,
+          ];
+        } else {
+          nextReactions = cur.filter(
+            (r) => !(r.userId === env.user_id && r.emoji === env.emoji),
+          );
+          if (nextReactions.length === cur.length) return {};
+        }
+        const copy = list.slice();
+        copy[idx] = { ...existing, reactions: nextReactions } as LocalMessage;
+        next[cid] = copy;
+        changed = true;
+        break;
+      }
+      if (!changed) return {};
+      return { messages: next };
+    });
+  },
 
   async togglePinnedConv(convId, pin) {
     // Optimistic update — flip the local pin set immediately so the sidebar
@@ -1501,6 +1700,10 @@ function bridgeWs() {
         break;
       case 'voice_played':
         store.applyVoicePlayed(env as unknown as WireVoicePlayedEnv);
+        break;
+      case 'reaction_added':
+      case 'reaction_removed':
+        store.applyReaction(env as unknown as WireReactionEnv);
         break;
       default:
       // ignore unknown kinds; forward-compatible
