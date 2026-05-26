@@ -54,6 +54,12 @@ export function Composer({ onSend, onTyping, disabled, placeholder }: Props) {
       setValue('');
     } finally {
       setSending(false);
+      // Restore focus so the user can immediately type the next message.
+      // Browsers blur disabled textareas; defer to next tick so React has
+      // already re-enabled the element by the time we focus it.
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+      });
     }
   }
 
