@@ -1,13 +1,21 @@
 // Modal listing the members of a group/channel. Opens when the user clicks
 // the conversation title/avatar. Roles are shown as small mono badges next
 // to each member's handle.
+//
+// Owner/admin extras: a small "+" button in the header opens an inline
+// AddMembers panel that reuses UserMultiPicker. Submitting calls
+// Messaging.addMembers and refreshes the list in place.
 
 import { useEffect, useState } from 'react';
-import type { Member } from '@racass-pixel/quick-protocol';
+import type { Member, User } from '@racass-pixel/quick-protocol';
+import { Plus } from 'lucide-react';
 import { messagingClient } from '../../api/messaging';
+import { useChats } from '../../stores/useChats';
 import { Avatar } from '../primitives/Avatar';
+import { Button } from '../primitives/Button';
 import { Kicker } from '../primitives/Kicker';
 import { useProfile } from '../../stores/useProfile';
+import { UserMultiPicker } from './UserMultiPicker';
 
 export function MembersModal({
   conversationId,
@@ -18,7 +26,17 @@ export function MembersModal({
 }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [picked, setPicked] = useState<User[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
+  // Read role straight off the chats store so we don't need an extra prop.
+  const myRole = useChats((s) => s.byId[conversationId]?.myRole) ?? '';
+  const canAdd = myRole === 'owner' || myRole === 'admin';
+
+  // Pull list on mount + after a successful add so the user sees the new
+  // members appear in the same modal.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -36,6 +54,33 @@ export function MembersModal({
     };
   }, [conversationId]);
 
+  // Filter the picker results so already-present members can't be added twice.
+  const memberIds = new Set((members ?? []).map((m) => m.user?.id).filter(Boolean) as string[]);
+  const pickedNew = picked.filter((u) => !memberIds.has(u.id));
+
+  async function submitAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (pickedNew.length === 0 || submitting) return;
+    setSubmitting(true);
+    setAddError(null);
+    try {
+      await messagingClient.addMembers({
+        conversationId,
+        userIds: pickedNew.map((u) => u.id),
+      });
+      // Refetch — server-side validation may have rejected some entries
+      // (private accounts, blocks etc.) so we trust the round trip.
+      const r = await messagingClient.listMembers({ conversationId });
+      setMembers(r.members ?? []);
+      setPicked([]);
+      setShowAdd(false);
+    } catch (e: unknown) {
+      setAddError(e instanceof Error ? e.message : 'Could not add members.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center bg-bg/80 pt-20 px-4">
       <button
@@ -49,14 +94,70 @@ export function MembersModal({
           <Kicker className="mb-0">
             members{members ? ` · ${members.length}` : ''}
           </Kicker>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-ink-3 text-xs font-mono hover:text-ember"
-          >
-            close
-          </button>
+          <div className="flex items-center gap-3">
+            {canAdd && !showAdd && (
+              <button
+                type="button"
+                onClick={() => setShowAdd(true)}
+                aria-label="Add members"
+                title="Add members"
+                className="w-7 h-7 inline-flex items-center justify-center rounded-full text-ink-2 hover:text-ember hover:bg-raised transition-colors"
+              >
+                <Plus size={16} strokeWidth={2} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-ink-3 text-xs font-mono hover:text-ember"
+            >
+              close
+            </button>
+          </div>
         </div>
+
+        {showAdd && (
+          <form
+            onSubmit={submitAdd}
+            className="px-5 py-4 border-b border-line space-y-3 bg-raised/40"
+          >
+            <label className="kicker block">add members</label>
+            <UserMultiPicker
+              value={picked}
+              onChange={setPicked}
+              placeholder="Find by handle…"
+            />
+            {pickedNew.length !== picked.length && (
+              <p className="text-ink-3 text-xs font-mono">
+                {picked.length - pickedNew.length} already in this conversation
+              </p>
+            )}
+            {addError && (
+              <p className="text-err text-xs font-mono" role="alert">
+                {addError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setShowAdd(false);
+                  setPicked([]);
+                  setAddError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pickedNew.length === 0 || submitting}>
+                {submitting
+                  ? 'Adding…'
+                  : `Add ${pickedNew.length || ''}`.trim()}
+              </Button>
+            </div>
+          </form>
+        )}
+
         <div className="max-h-96 overflow-y-auto">
           {error && (
             <p className="px-5 py-4 text-err text-xs font-mono" role="alert">
