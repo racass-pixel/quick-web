@@ -539,6 +539,10 @@ function ParticipantTileInner({
           </div>
         </div>
       )}
+      {/* Remote audio is invisible but mandatory — without attaching the mic
+          track to a media element the participant is silent. Local tile has
+          audioTrack=null so this no-ops. */}
+      {tile.audioTrack && <TrackAudio track={tile.audioTrack} />}
       {!compact && !muteOverlay && (
         <div className="absolute left-2 bottom-2 right-2 flex items-center gap-1 text-[11px] text-ink-1 bg-black/55 px-2 py-1 rounded">
           <span className="truncate">{tile.displayName}</span>
@@ -551,6 +555,13 @@ function ParticipantTileInner({
       )}
     </div>
   );
+}
+
+// Hidden audio element wired to a LiveKit track.attach(). Used per remote
+// participant in group calls so every voice is audible.
+function TrackAudio({ track }: { track: TrackType }) {
+  const ref = useAttached<HTMLAudioElement>(track);
+  return <audio ref={ref} autoPlay playsInline />;
 }
 
 // Stable wrapper around <video> that wires up track.attach() / detach().

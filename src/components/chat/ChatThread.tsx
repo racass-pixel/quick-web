@@ -304,8 +304,9 @@ export function ChatThread({ convId }: Props) {
 
   // Group-call helpers — used by both the banner Join button and the small
   // Phone+ start icon in the header. Both gate on media consent like 1:1 calls.
-  const canStartGroupCall =
-    (isGroup || isChannel) && (conv.myRole === 'owner' || conv.myRole === 'admin');
+  // TG model: ANY group member can start a voice chat. Channels have no
+  // voice chats (TG behaviour). myRole non-empty implies membership.
+  const canStartGroupCall = isGroup && !!conv.myRole;
   const inThisGroupCall =
     groupCallState.kind === 'active' &&
     !!activeGroupCall &&

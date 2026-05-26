@@ -46,6 +46,10 @@ export type CallParticipantTile = {
   isLocal: boolean;
   cameraTrack: Track | RemoteTrack | null;
   screenTrack: Track | RemoteTrack | null;
+  // Remote microphone track. Must be attached to a hidden <audio> element by
+  // the renderer or the participant is silent — the most common reason a
+  // group call "has no sound" is forgetting to plumb this through.
+  audioTrack: RemoteTrack | null;
   micActive: boolean;
 };
 
@@ -153,18 +157,24 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
       isLocal: true,
       cameraTrack: localCamera,
       screenTrack: localScreen,
+      audioTrack: null,                       // we don't play our own mic back
       micActive: lp.isMicrophoneEnabled,
     });
 
-    // Remote participants.
+    // Remote participants — pull audioTrack too so the renderer can attach it
+    // to a hidden <audio> element. Without this every group call is silent.
     activeRoom.remoteParticipants.forEach((rp: RemoteParticipant) => {
       let cam: RemoteTrack | null = null;
       let scr: RemoteTrack | null = null;
+      let aud: RemoteTrack | null = null;
       let micPub: RemoteTrackPublication | null = null;
       rp.trackPublications.forEach((pub: RemoteTrackPublication) => {
         if (pub.source === Track.Source.Camera) cam = pub.track ?? cam;
         if (pub.source === Track.Source.ScreenShare) scr = pub.track ?? scr;
-        if (pub.source === Track.Source.Microphone) micPub = pub;
+        if (pub.source === Track.Source.Microphone) {
+          micPub = pub;
+          aud = pub.track ?? aud;
+        }
       });
       tiles.push({
         participantId: rp.identity,
@@ -172,6 +182,7 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
         isLocal: false,
         cameraTrack: cam,
         screenTrack: scr,
+        audioTrack: aud,
         micActive: !!micPub && !(micPub as RemoteTrackPublication).isMuted,
       });
     });
