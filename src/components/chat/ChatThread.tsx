@@ -541,6 +541,9 @@ export function ChatThread({ convId }: Props) {
                       senderUser={senderUser}
                       status={(m as Message & { status?: 'pending' | 'sent' | 'read' | 'failed' }).status}
                       convId={convId}
+                      convType={conv.type}
+                      myRole={conv.myRole}
+                      unreadCount={unreadCount}
                     />
                   )}
                 </div>
