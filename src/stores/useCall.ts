@@ -440,7 +440,11 @@ export const useCall = create<CallStore>((set, get) => {
       const baseOpts: Record<string, unknown> = {
         resolution: { width: 3840, height: 2160 },
         contentHint: 'detail',
-        audio: true,
+        // suppressLocalAudioPlayback stops the captured system-audio stream
+        // from picking up what our app itself is playing (remote voices),
+        // preventing the loop where peers hear themselves through the
+        // sharer's screen-audio track.
+        audio: { suppressLocalAudioPlayback: true },
         systemAudio: 'include',
         selfBrowserSurface: 'exclude',
         surfaceSwitching: 'include',

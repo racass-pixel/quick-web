@@ -558,7 +558,9 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
       const baseOpts: Record<string, unknown> = {
         resolution: { width: 3840, height: 2160 },
         contentHint: 'detail',
-        audio: true,
+        // suppressLocalAudioPlayback keeps remote voices played in our app
+        // from looping back into the shared system-audio track.
+        audio: { suppressLocalAudioPlayback: true },
         systemAudio: 'include',
         selfBrowserSurface: 'exclude',
         surfaceSwitching: 'include',
