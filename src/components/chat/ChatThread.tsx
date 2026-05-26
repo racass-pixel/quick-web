@@ -19,7 +19,6 @@ import { CallButton } from '../call/CallButton';
 import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
-import { TypingDot } from './TypingDot';
 import { UnreadDivider } from './UnreadDivider';
 import { useChats } from '../../stores/useChats';
 import { useProfile } from '../../stores/useProfile';
@@ -412,10 +411,6 @@ export function ChatThread({ convId }: Props) {
           onClick={jumpToBottom}
         />
       )}
-
-      <div className="px-6 h-6 flex items-center shrink-0">
-        {peerTyping && <TypingDot label={`@${peerHandle ?? 'peer'} is typing`} />}
-      </div>
 
       {composerHidden ? (
         <div className="shrink-0 px-6 py-6 border-t border-line text-ink-3 text-xs font-mono text-center">
