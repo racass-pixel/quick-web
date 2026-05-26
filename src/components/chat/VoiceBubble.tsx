@@ -17,8 +17,20 @@
 // message id when they hit Play. The parent debounces server-side via a
 // per-id Set in MessageBubble, so a re-render mid-play doesn't double-fire.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pause, Play } from 'lucide-react';
+import { session } from '../../api/session';
+
+// Build the playback URL by appending the session token as a query string.
+// The <audio> element can't set Authorization headers; the backend's voice
+// download proxy accepts the same token via `?token=` for this reason.
+function buildPlaybackURL(url: string): string {
+  if (!url) return url;
+  const tok = session.token;
+  if (!tok) return url;
+  const join = url.includes('?') ? '&' : '?';
+  return `${url}${join}token=${encodeURIComponent(tok)}`;
+}
 
 export type VoicePayload = {
   fileId: string;
@@ -54,6 +66,9 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
   const [currentMs, setCurrentMs] = useState(0);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [sizeLabel, setSizeLabel] = useState<string>('—KB');
+  // Audio src points at our backend's streaming proxy with the session token
+  // in the query string (browsers can't put Authorization on <audio>).
+  const playbackURL = useMemo(() => buildPlaybackURL(voice.url), [voice.url]);
 
   // Peaks are 0-255 ints; normalise to 0-1 for height calc. Pad/truncate
   // to BAR_COUNT to be defensive against malformed inputs.
@@ -81,7 +96,7 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
     const ctrl = new AbortController();
     (async () => {
       try {
-        const res = await fetch(voice.url, { method: 'HEAD', signal: ctrl.signal });
+        const res = await fetch(buildPlaybackURL(voice.url), { method: 'HEAD', signal: ctrl.signal });
         if (cancelled) return;
         const len = res.headers.get('content-length');
         const n = len ? Number(len) : NaN;
@@ -237,7 +252,7 @@ export function VoiceBubble({ voice, isOwn, onFirstPlay }: Props) {
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio
         ref={audioRef}
-        src={voice.url}
+        src={playbackURL}
         preload="metadata"
         onTimeUpdate={onTimeUpdate}
         onPlay={onPlay}
