@@ -29,9 +29,11 @@ function ChatsScreen() {
   }
 
   return (
-    <main className="min-h-screen flex">
-      <Sidebar />
-      <section className="hidden md:flex flex-1 items-center justify-center px-12">
+    <main className="h-screen flex overflow-hidden">
+      <div className="h-screen flex flex-col">
+        <Sidebar />
+      </div>
+      <section className="hidden md:flex flex-1 items-center justify-center px-12 min-w-0 min-h-0">
         <div className="max-w-sm text-center">
           <Kicker>chats · empty</Kicker>
           <h2 className="text-2xl tracking-tighter text-ink-1 mb-3">

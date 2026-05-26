@@ -29,11 +29,11 @@ function ChatThreadScreen() {
   }
 
   return (
-    <main className="min-h-screen flex">
-      <div className="hidden md:flex">
+    <main className="h-screen flex overflow-hidden">
+      <div className="hidden md:flex h-screen flex-col">
         <Sidebar />
       </div>
-      <section className="flex-1 flex min-w-0 min-h-screen">
+      <section className="flex-1 flex min-w-0 min-h-0">
         <ChatThread convId={id} />
       </section>
     </main>
