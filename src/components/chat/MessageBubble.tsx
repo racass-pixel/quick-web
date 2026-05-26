@@ -322,7 +322,10 @@ export function MessageBubble({
             <span>{message.body}</span>
             <span className="float-right ml-3 mt-1 inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-ink-3 select-none">
               {editedAt && (
-                <span className="italic" title="Edited">
+                <span
+                  className="italic"
+                  title={`Edited ${new Date(editedAt).toLocaleString()}`}
+                >
                   edited
                 </span>
               )}
