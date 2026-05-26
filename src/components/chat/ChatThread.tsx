@@ -40,6 +40,7 @@ export function ChatThread({ convId }: Props) {
   const typing = useChats((s) => s.typing[convId]);
   const currentUserId = useChats((s) => s.currentUserId);
   const lastReadAtByPeer = useChats((s) => s.lastReadAtByPeer[convId] ?? 0);
+  const senderUserByMsgId = useChats((s) => s.senderUserByMsgId);
   const loadMessages = useChats((s) => s.loadMessages);
   const setActiveConv = useChats((s) => s.setActiveConv);
   const sendFn = useChats((s) => s.send);
@@ -256,6 +257,8 @@ export function ChatThread({ convId }: Props) {
                 )
               : null;
             const needsSeparator = !!day && (!prevDay || !sameDay(day, prevDay));
+            const showAttribution = (isGroup || isChannel) && !isOwn;
+            const senderUser = showAttribution ? senderUserByMsgId[m.id] : undefined;
             return (
               <Fragment key={m.id}>
                 {needsSeparator && day && <DaySeparator label={dayLabel(day)} />}
@@ -263,6 +266,8 @@ export function ChatThread({ convId }: Props) {
                   message={m}
                   isOwn={isOwn}
                   isReadByPeer={isReadByPeer}
+                  showAttribution={showAttribution}
+                  senderUser={senderUser}
                 />
               </Fragment>
             );

@@ -15,12 +15,20 @@ import { messagingClient } from '../api/messaging';
 import { ws, type WsEnvelope } from '../api/ws';
 
 // Wire-side envelope shapes — JSON, not protobuf.
+type WireUser = {
+  id: string;
+  handle: string;
+  display_name: string;
+  avatar_color: string;
+};
+
 type WireMessage = {
   id: string;
   conversation_id: string;
   sender_id: string;
   body: string;
   created_at: string; // ISO timestamp
+  sender_user?: WireUser;
 };
 
 type WireMessageEnv = {
@@ -64,10 +72,22 @@ type WireConvRemovedEnv = {
   conversation_id: string;
 };
 
+// Minimal user snapshot attached to messages for group attribution rendering
+// (avatar + display name above peer bubbles in groups/channels).
+export type SenderUser = {
+  id: string;
+  handle: string;
+  displayName: string;
+  avatarColor: string;
+};
+
 type ChatsState = {
   conversationsOrder: string[]; // conv ids, sorted by lastMessageAt desc
   byId: Record<string, Conversation>;
   messages: Record<string, Message[]>; // newest-last
+  // senderUserByMsgId: per-message snapshot of the sender, used to render
+  // group attribution (avatar + name above bubble) without a roundtrip.
+  senderUserByMsgId: Record<string, SenderUser>;
   hasMore: Record<string, boolean>;
   typing: Record<string, Set<string>>; // convId -> userIds typing within last 3s
   // Peer's last-read watermark per conversation (ms epoch). When a `read`
@@ -135,6 +155,7 @@ export const useChats = create<ChatsState>((set, get) => ({
   conversationsOrder: [],
   byId: {},
   messages: {},
+  senderUserByMsgId: {},
   hasMore: {},
   typing: {},
   lastReadAtByPeer: {},
@@ -294,9 +315,22 @@ export const useChats = create<ChatsState>((set, get) => ({
           } as Conversation)
         : conv;
       const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
+      const wireSender = env.message.sender_user;
+      const senderUserByMsgId = wireSender
+        ? {
+            ...s.senderUserByMsgId,
+            [msg.id]: {
+              id: wireSender.id,
+              handle: wireSender.handle,
+              displayName: wireSender.display_name,
+              avatarColor: wireSender.avatar_color,
+            },
+          }
+        : s.senderUserByMsgId;
       return {
         messages: { ...s.messages, [convId]: [...existing, msg] },
         byId: nextById,
+        senderUserByMsgId,
         conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
       };
     });
