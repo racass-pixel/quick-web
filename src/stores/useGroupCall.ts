@@ -419,31 +419,37 @@ export const useGroupCall = create<GroupCallStore>((set, get) => {
     onWsEnvelope(env) {
       switch (env.kind) {
         case 'group_call_started': {
-          // Backend may send the call object snake-cased; pull both shapes.
+          // Backend sends a flat envelope: { kind, conversation_id, call_id,
+          // room_name, started_by }. Older variants nest the GroupCall under
+          // `call`; accept either shape.
           const callRaw =
-            (typeof env.call === 'object' && env.call !== null
+            typeof env.call === 'object' && env.call !== null
               ? (env.call as Record<string, unknown>)
-              : null) ?? null;
-          if (!callRaw) return;
-          const convId =
-            (typeof callRaw.conversation_id === 'string' && callRaw.conversation_id) ||
-            (typeof callRaw.conversationId === 'string' && callRaw.conversationId) ||
-            '';
-          const id =
-            (typeof callRaw.id === 'string' && callRaw.id) || '';
+              : null;
+          const pickStr = (...keys: string[]): string => {
+            for (const k of keys) {
+              if (callRaw && typeof callRaw[k] === 'string') return callRaw[k] as string;
+              if (typeof env[k] === 'string') return env[k] as string;
+            }
+            return '';
+          };
+          const pickNum = (...keys: string[]): number => {
+            for (const k of keys) {
+              if (callRaw && typeof callRaw[k] === 'number') return callRaw[k] as number;
+              if (typeof env[k] === 'number') return env[k] as number;
+            }
+            return 0;
+          };
+          const convId = pickStr('conversation_id', 'conversationId');
+          const id = pickStr('id', 'call_id', 'callId');
           if (!convId || !id) return;
-          const startedBy =
-            (typeof callRaw.started_by === 'string' && callRaw.started_by) ||
-            (typeof callRaw.startedBy === 'string' && callRaw.startedBy) ||
-            '';
-          const roomName =
-            (typeof callRaw.room_name === 'string' && callRaw.room_name) ||
-            (typeof callRaw.roomName === 'string' && callRaw.roomName) ||
-            '';
-          const participantCount =
-            (typeof callRaw.participant_count === 'number' && callRaw.participant_count) ||
-            (typeof callRaw.participantCount === 'number' && callRaw.participantCount) ||
-            0;
+          const startedBy = pickStr('started_by', 'startedBy');
+          const roomName = pickStr('room_name', 'roomName');
+          // Server doesn't always include a participant_count on the started
+          // envelope (the call begins with exactly the starter — 1). Use the
+          // value if present, otherwise default to 1 so the banner reads
+          // sensibly out of the gate.
+          const participantCount = pickNum('participant_count', 'participantCount') || 1;
           const call = {
             $typeName: 'quick.v1.GroupCall',
             id,

@@ -468,7 +468,7 @@ export function ChatThread({ convId }: Props) {
             <span className="text-ink-3"> · </span>
             <span className="text-ink-2 font-mono tabular-nums">
               {activeGroupCall.participantCount}{' '}
-              {activeGroupCall.participantCount === 1 ? 'active' : 'active'}
+              {activeGroupCall.participantCount === 1 ? 'participant' : 'participants'}
             </span>
           </div>
           {inThisGroupCall ? (
