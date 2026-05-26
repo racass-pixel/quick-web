@@ -11,8 +11,20 @@ import type {
   Conversation,
   Message,
 } from '@racass-pixel/quick-protocol';
+import { ConnectError, Code } from '@connectrpc/connect';
 import { messagingClient } from '../api/messaging';
 import { ws, type WsEnvelope } from '../api/ws';
+
+// Local-only wrapper around a proto Message adding TG-style queue metadata.
+// All UI now passes the local shape through, since proto Message is a
+// structural type — extra fields don't break the wire side and existing
+// consumers ignore them.
+export type MessageStatus = 'pending' | 'sent' | 'read' | 'failed';
+export type LocalMessage = Message & {
+  status?: MessageStatus;
+  tempId?: string;
+  queuedAt?: number;
+};
 
 // Wire-side envelope shapes — JSON, not protobuf.
 type WireUser = {
@@ -84,7 +96,11 @@ export type SenderUser = {
 type ChatsState = {
   conversationsOrder: string[]; // conv ids, sorted by lastMessageAt desc
   byId: Record<string, Conversation>;
-  messages: Record<string, Message[]>; // newest-last
+  messages: Record<string, LocalMessage[]>; // newest-last
+  // Per-conv FIFO queue of pending outbound messages awaiting send. Drained
+  // by `drainQueue`. Persisted to `localStorage` on every mutation under
+  // `quick.pending.<convId>` so a reload picks up where we left off.
+  queueByConv: Record<string, LocalMessage[]>;
   // senderUserByMsgId: per-message snapshot of the sender, used to render
   // group attribution (avatar + name above bubble) without a roundtrip.
   senderUserByMsgId: Record<string, SenderUser>;
@@ -113,6 +129,12 @@ type ChatsState = {
   ): Promise<{ inserted: number; hasMore: boolean } | void>;
   loadAroundUnread(convId: string): Promise<void>;
   send(convId: string, body: string): Promise<void>;
+  // Resume sending a failed message by flipping it back to `pending` and
+  // kicking the drainer. No-op if the tempId is no longer in the queue.
+  retrySend(convId: string, tempId: string): void;
+  // Drain a single conv's queue head-first. Idempotent — running instances
+  // are tracked via an in-memory set so calling repeatedly is safe.
+  drainQueue(convId: string): Promise<void>;
   markRead(convId: string, lastMsgId: string): Promise<void>;
   sendTyping(convId: string): void;
 
@@ -160,10 +182,175 @@ function reorderConvs(byId: Record<string, Conversation>): string[] {
 const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const lastTypingSent = new Map<string, number>(); // convId -> ms
 
+// In-flight drainer guard. Keeps `drainQueue` idempotent across rapid
+// successive sends from the composer or UI retries.
+const draining = new Set<string>();
+
+const PENDING_KEY_PREFIX = 'quick.pending.';
+
+function persistQueue(convId: string, queue: LocalMessage[]) {
+  try {
+    const key = PENDING_KEY_PREFIX + convId;
+    if (queue.length === 0) {
+      localStorage.removeItem(key);
+    } else {
+      // Strip non-serialisable bigint fields by writing a stable subset that
+      // we know how to rehydrate. We carry only the wire-shaped data plus
+      // queue metadata — the proto Message structural fields (id, etc) are
+      // re-created from the wire response on success.
+      const slim = queue.map((m) => ({
+        tempId: m.tempId,
+        body: m.body,
+        queuedAt: m.queuedAt,
+        status: m.status,
+      }));
+      localStorage.setItem(key, JSON.stringify(slim));
+    }
+  } catch {
+    // localStorage can throw on quota/private-mode — non-fatal, the queue
+    // still works in-memory for the current session.
+  }
+}
+
+function loadPersistedQueues(): Record<string, LocalMessage[]> {
+  const out: Record<string, LocalMessage[]> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(PENDING_KEY_PREFIX)) continue;
+      const convId = key.slice(PENDING_KEY_PREFIX.length);
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const slim = JSON.parse(raw) as Array<{
+          tempId: string;
+          body: string;
+          queuedAt: number;
+          status?: MessageStatus;
+        }>;
+        out[convId] = slim.map((s) => buildPendingMessage({
+          convId,
+          body: s.body,
+          tempId: s.tempId,
+          queuedAt: s.queuedAt,
+          senderId: useChats.getState().currentUserId ?? '',
+          status: s.status === 'failed' ? 'failed' : 'pending',
+        }));
+      } catch {
+        // ignore a corrupt entry; keep going
+      }
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return out;
+}
+
+// Build a local-only Message stub for a freshly-queued send. The structural
+// proto type accepts the extra `status`/`tempId`/`queuedAt` fields.
+function buildPendingMessage(opts: {
+  convId: string;
+  body: string;
+  tempId: string;
+  queuedAt: number;
+  senderId: string;
+  status?: MessageStatus;
+}): LocalMessage {
+  const ms = opts.queuedAt;
+  const stub = {
+    $typeName: 'quick.v1.Message',
+    id: opts.tempId, // temporary id — replaced once the server responds
+    conversationId: opts.convId,
+    senderId: opts.senderId,
+    body: opts.body,
+    createdAt: {
+      $typeName: 'google.protobuf.Timestamp',
+      seconds: BigInt(Math.floor(ms / 1000)),
+      nanos: (ms % 1000) * 1_000_000,
+    },
+    status: opts.status ?? 'pending',
+    tempId: opts.tempId,
+    queuedAt: ms,
+  } as unknown as LocalMessage;
+  return stub;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, Math.max(0, ms)));
+}
+
+// Replace a pending stub (matched by tempId) in the conv's messages with the
+// real server-issued Message, mark it `sent`, drop it from the queue, persist.
+// Also bumps the conversation preview/lastMessageAt for sidebar ordering.
+function replacePendingWithReal(convId: string, tempId: string, real: Message) {
+  useChats.setState((s) => {
+    const queue = s.queueByConv[convId] ?? [];
+    const nextQueue = queue.filter((m) => m.tempId !== tempId);
+    persistQueue(convId, nextQueue);
+    const msgs = s.messages[convId] ?? [];
+    const idx = msgs.findIndex((m) => m.tempId === tempId);
+    let nextMsgs: LocalMessage[];
+    if (idx >= 0) {
+      // Dedupe: if the WS already landed this real id while we were awaiting,
+      // drop the pending stub instead of duplicating.
+      const alreadyHasReal = msgs.some((m) => m.id === real.id && m.tempId !== tempId);
+      if (alreadyHasReal) {
+        nextMsgs = msgs.filter((m) => m.tempId !== tempId);
+      } else {
+        nextMsgs = msgs.slice();
+        nextMsgs[idx] = {
+          ...(real as LocalMessage),
+          status: 'sent',
+        };
+      }
+    } else {
+      // Pending was already swapped (e.g. by WS path). Nothing to do.
+      nextMsgs = msgs;
+    }
+    const conv = s.byId[convId];
+    const nextConv = conv
+      ? ({
+          ...conv,
+          lastMessageAt: real.createdAt,
+          preview: real,
+        } as Conversation)
+      : conv;
+    const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
+    return {
+      messages: { ...s.messages, [convId]: nextMsgs },
+      queueByConv: { ...s.queueByConv, [convId]: nextQueue },
+      byId: nextById,
+      conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
+    };
+  });
+}
+
+// Mark the queue head (and its rendered bubble) as failed. Leaves the entry
+// in the queue so user-initiated retry can re-attempt it.
+function markHeadFailed(convId: string, tempId: string) {
+  useChats.setState((s) => {
+    const queue = s.queueByConv[convId] ?? [];
+    const idx = queue.findIndex((m) => m.tempId === tempId);
+    if (idx < 0) return {};
+    const nextQueue = queue.slice();
+    nextQueue[idx] = { ...nextQueue[idx], status: 'failed' };
+    const msgs = s.messages[convId] ?? [];
+    const mIdx = msgs.findIndex((m) => m.tempId === tempId);
+    const nextMsgs = msgs.slice();
+    if (mIdx >= 0) nextMsgs[mIdx] = { ...nextMsgs[mIdx], status: 'failed' };
+    persistQueue(convId, nextQueue);
+    return {
+      queueByConv: { ...s.queueByConv, [convId]: nextQueue },
+      messages: { ...s.messages, [convId]: nextMsgs },
+    };
+  });
+}
+
 export const useChats = create<ChatsState>((set, get) => ({
   conversationsOrder: [],
   byId: {},
   messages: {},
+  queueByConv: {},
   senderUserByMsgId: {},
   hasMore: {},
   typing: {},
@@ -195,7 +382,14 @@ export const useChats = create<ChatsState>((set, get) => ({
   },
 
   setCurrentUserId(id) {
+    const prev = get().currentUserId;
     set({ currentUserId: id });
+    // First time we learn who we are — hydrate any persisted pending queues
+    // so the user sees their unsent messages immediately, and kick the
+    // drainer on each so they finish what they started.
+    if (id && !prev) {
+      hydrateQueues();
+    }
   },
 
   async loadConversations() {
@@ -305,32 +499,115 @@ export const useChats = create<ChatsState>((set, get) => ({
   async send(convId, body) {
     const trimmed = body.trim();
     if (!trimmed) return;
-    const res = await messagingClient.sendMessage({
-      conversationId: convId,
+    const tempId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    const queuedAt = Date.now();
+    const senderId = get().currentUserId ?? '';
+    const pending = buildPendingMessage({
+      convId,
       body: trimmed,
+      tempId,
+      queuedAt,
+      senderId,
+      status: 'pending',
     });
-    if (res.message) {
-      // The server will also fan this back to us via WS; applyMessage is
-      // dedupe-safe so it's fine to land twice.
-      const msg = res.message;
-      set((s) => {
-        const existing = s.messages[convId] ?? [];
-        if (existing.some((m) => m.id === msg.id)) return {};
-        const conv = s.byId[convId];
-        const nextConv = conv
-          ? ({
-              ...conv,
-              lastMessageAt: msg.createdAt,
-              preview: msg,
-            } as Conversation)
-          : conv;
-        const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
-        return {
-          messages: { ...s.messages, [convId]: [...existing, msg] },
-          byId: nextById,
-          conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
-        };
-      });
+    set((s) => {
+      const existing = s.messages[convId] ?? [];
+      const queue = s.queueByConv[convId] ?? [];
+      const nextQueue = [...queue, pending];
+      persistQueue(convId, nextQueue);
+      return {
+        messages: { ...s.messages, [convId]: [...existing, pending] },
+        queueByConv: { ...s.queueByConv, [convId]: nextQueue },
+      };
+    });
+    void get().drainQueue(convId);
+  },
+
+  retrySend(convId, tempId) {
+    set((s) => {
+      const queue = s.queueByConv[convId] ?? [];
+      const idx = queue.findIndex((m) => m.tempId === tempId);
+      if (idx < 0) return {};
+      const updatedQueue = queue.slice();
+      updatedQueue[idx] = { ...updatedQueue[idx], status: 'pending' };
+      const msgs = s.messages[convId] ?? [];
+      const mIdx = msgs.findIndex((m) => m.tempId === tempId);
+      const updatedMsgs =
+        mIdx >= 0
+          ? (() => {
+              const copy = msgs.slice();
+              copy[mIdx] = { ...copy[mIdx], status: 'pending' };
+              return copy;
+            })()
+          : msgs;
+      persistQueue(convId, updatedQueue);
+      return {
+        queueByConv: { ...s.queueByConv, [convId]: updatedQueue },
+        messages: { ...s.messages, [convId]: updatedMsgs },
+      };
+    });
+    void get().drainQueue(convId);
+  },
+
+  async drainQueue(convId) {
+    if (draining.has(convId)) return;
+    draining.add(convId);
+    try {
+      // Loop the head of the queue. We re-read state every iteration since
+      // new sends or WS-driven completions may have mutated it.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const queue = get().queueByConv[convId] ?? [];
+        const head = queue[0];
+        if (!head) return;
+        if (head.status === 'failed') {
+          // Stop at a failed head — user must retry explicitly. We
+          // intentionally don't drain past it to preserve ordering.
+          return;
+        }
+        try {
+          const res = await messagingClient.sendMessage({
+            conversationId: convId,
+            body: head.body,
+          });
+          const real = res.message;
+          if (!real) {
+            // Shouldn't happen in practice; treat as failed so the user can
+            // retry rather than silently dropping the message.
+            markHeadFailed(convId, head.tempId!);
+            return;
+          }
+          replacePendingWithReal(convId, head.tempId!, real);
+        } catch (err) {
+          const ce = ConnectError.from(err);
+          if (ce.code === Code.ResourceExhausted) {
+            // Server has rate-limited us. Read the unix-second retry hint
+            // from the trailer metadata (Connect-Web exposes both header
+            // and trailer values via the `metadata` Headers object).
+            const raw =
+              ce.metadata.get('retry-after-unix') ??
+              ce.metadata.get('Retry-After-Unix');
+            const retryUnix = raw ? Number(raw) : 0;
+            const delayMs = retryUnix > 0
+              ? Math.max(0, retryUnix * 1000 - Date.now())
+              : 1000;
+            // eslint-disable-next-line no-console
+            console.debug('[chats] drainQueue: rate-limited, sleeping', delayMs);
+            await sleep(delayMs);
+            // continue: same head will be retried
+            continue;
+          }
+          // Other error → mark failed, stop draining.
+          // eslint-disable-next-line no-console
+          console.warn('[chats] drainQueue: send failed', ce);
+          markHeadFailed(convId, head.tempId!);
+          return;
+        }
+      }
+    } finally {
+      draining.delete(convId);
     }
   },
 
@@ -381,17 +658,13 @@ export const useChats = create<ChatsState>((set, get) => ({
       if (existing.some((m) => m.id === msg.id)) return {};
       const isActive = s.activeConvId === convId;
       const isOwn = s.currentUserId != null && msg.senderId === s.currentUserId;
-      const conv = s.byId[convId];
-      const nextConv = conv
-        ? ({
-            ...conv,
-            lastMessageAt: msg.createdAt,
-            preview: msg,
-            unreadCount:
-              isActive || isOwn ? conv.unreadCount : conv.unreadCount + 1,
-          } as Conversation)
-        : conv;
-      const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
+
+      // Self-send dedupe: a WS echo of our own send may arrive BEFORE the
+      // unary sendMessage response. The pending stub uses a tempId, so a
+      // straight id check misses it. Heuristic: if isOwn and there's a
+      // pending message with identical body queued within the last 60s,
+      // treat the WS arrival as the canonical send completion — swap the
+      // pending stub for the real message and drop the queue entry.
       const wireSender = env.message.sender_user;
       const senderUserByMsgId = wireSender
         ? {
@@ -404,8 +677,59 @@ export const useChats = create<ChatsState>((set, get) => ({
             },
           }
         : s.senderUserByMsgId;
+
+      if (isOwn) {
+        const queue = s.queueByConv[convId] ?? [];
+        const now = Date.now();
+        const pendingIdx = existing.findIndex(
+          (m) =>
+            m.tempId &&
+            m.status !== 'failed' &&
+            m.body === msg.body &&
+            m.queuedAt != null &&
+            now - m.queuedAt < 60_000,
+        );
+        if (pendingIdx >= 0) {
+          const pending = existing[pendingIdx];
+          const nextMsgs = existing.slice();
+          nextMsgs[pendingIdx] = {
+            ...(msg as LocalMessage),
+            status: 'sent',
+          };
+          const nextQueue = queue.filter((m) => m.tempId !== pending.tempId);
+          persistQueue(convId, nextQueue);
+          const conv = s.byId[convId];
+          const nextConv = conv
+            ? ({
+                ...conv,
+                lastMessageAt: msg.createdAt,
+                preview: msg,
+              } as Conversation)
+            : conv;
+          const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
+          return {
+            messages: { ...s.messages, [convId]: nextMsgs },
+            queueByConv: { ...s.queueByConv, [convId]: nextQueue },
+            byId: nextById,
+            senderUserByMsgId,
+            conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
+          };
+        }
+      }
+
+      const conv = s.byId[convId];
+      const nextConv = conv
+        ? ({
+            ...conv,
+            lastMessageAt: msg.createdAt,
+            preview: msg,
+            unreadCount:
+              isActive || isOwn ? conv.unreadCount : conv.unreadCount + 1,
+          } as Conversation)
+        : conv;
+      const nextById = nextConv ? { ...s.byId, [convId]: nextConv } : s.byId;
       return {
-        messages: { ...s.messages, [convId]: [...existing, msg] },
+        messages: { ...s.messages, [convId]: [...existing, msg as LocalMessage] },
         byId: nextById,
         senderUserByMsgId,
         conversationsOrder: nextConv ? reorderConvs(nextById) : s.conversationsOrder,
@@ -531,6 +855,36 @@ export const useChats = create<ChatsState>((set, get) => ({
     );
   },
 }));
+
+// Load any persisted `quick.pending.*` queues into the store and render the
+// entries as pending messages in their respective conversations so the user
+// sees them immediately. Idempotent — replays are safely deduped on conv id.
+let hydrated = false;
+function hydrateQueues() {
+  if (hydrated) return;
+  hydrated = true;
+  const queues = loadPersistedQueues();
+  const convIds = Object.keys(queues);
+  if (convIds.length === 0) return;
+  useChats.setState((s) => {
+    const nextMessages = { ...s.messages };
+    const nextQueue = { ...s.queueByConv };
+    for (const convId of convIds) {
+      const pending = queues[convId];
+      if (!pending || pending.length === 0) continue;
+      const existing = nextMessages[convId] ?? [];
+      // Drop any entries whose tempId is already in the rendered list.
+      const haveTemp = new Set(existing.map((m) => m.tempId).filter(Boolean));
+      const fresh = pending.filter((m) => !haveTemp.has(m.tempId));
+      nextMessages[convId] = [...existing, ...fresh];
+      nextQueue[convId] = [...(nextQueue[convId] ?? []), ...fresh];
+    }
+    return { messages: nextMessages, queueByConv: nextQueue };
+  });
+  for (const convId of convIds) {
+    void useChats.getState().drainQueue(convId);
+  }
+}
 
 // Wire WS envelopes into the store once. Doing this at module load means any
 // component that imports useChats also activates the bridge.
