@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore, useState } from 'react';
 import type { User } from '@racass-pixel/quick-protocol';
 import { session } from '../api/session';
 import { usersClient } from '../api/users';
+import { LocalStore } from '../store';
 
 // Module-level cache so a remount after the first /me call avoids a flash.
 // undefined = not yet resolved, null = confirmed anonymous, User = signed in.
@@ -28,6 +29,12 @@ export function useAuth() {
       setUser(null);
       return;
     }
+    // Open the tdata local store before we touch network. Best-effort —
+    // failures (no SubtleCrypto, no IndexedDB) leave the store closed and
+    // the rest of the app keeps working off network state.
+    void LocalStore.boot(token).catch(() => {
+      /* swallow */
+    });
     if (cachedUser && (cachedUser as User).id) {
       setUser(cachedUser);
       return;
@@ -58,6 +65,10 @@ export function useAuth() {
     signOut: () => {
       cachedUser = null;
       session.setToken(null);
+      // Best-effort wipe of the on-disk cache on explicit sign-out.
+      void LocalStore.wipe().catch(() => {
+        /* swallow */
+      });
     },
   };
 }

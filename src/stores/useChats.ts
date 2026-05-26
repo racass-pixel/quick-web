@@ -14,6 +14,7 @@ import type {
 import { ConnectError, Code } from '@connectrpc/connect';
 import { messagingClient } from '../api/messaging';
 import { ws, type WsEnvelope } from '../api/ws';
+import { LocalStore } from '../store';
 
 // Local-only wrapper around a proto Message adding TG-style queue metadata.
 // All UI now passes the local shape through, since proto Message is a
@@ -391,6 +392,13 @@ function sleep(ms: number): Promise<void> {
 // real server-issued Message, mark it `sent`, drop it from the queue, persist.
 // Also bumps the conversation preview/lastMessageAt for sidebar ordering.
 function replacePendingWithReal(convId: string, tempId: string, real: Message) {
+  // Write-through: persist the server-stamped message.
+  const store = LocalStore.instance;
+  if (store) {
+    void store.messages.upsert(real).catch(() => {
+      /* swallow */
+    });
+  }
   useChats.setState((s) => {
     const queue = s.queueByConv[convId] ?? [];
     const nextQueue = queue.filter((m) => m.tempId !== tempId);
@@ -525,6 +533,20 @@ export const useChats = create<ChatsState>((set, get) => ({
 
   async loadConversations() {
     set({ loadingConvs: true });
+    // Read-through: hydrate from disk first so the sidebar paints instantly.
+    const store = LocalStore.instance;
+    if (store && Object.keys(get().byId).length === 0) {
+      try {
+        const cached = await store.chats.listAll();
+        if (cached.length > 0) {
+          const byId: Record<string, Conversation> = {};
+          for (const c of cached) byId[c.id] = c;
+          set({ byId, conversationsOrder: reorderConvs(byId) });
+        }
+      } catch {
+        /* swallow */
+      }
+    }
     try {
       const res = await messagingClient.listConversations({});
       const byId: Record<string, Conversation> = {};
@@ -533,6 +555,14 @@ export const useChats = create<ChatsState>((set, get) => ({
         byId,
         conversationsOrder: reorderConvs(byId),
       });
+      // Write-through.
+      if (store) {
+        void store.chats.upsertMany(res.conversations).catch(() => {
+          /* swallow */
+        });
+      }
+    } catch {
+      // Network down — keep the disk-hydrated state in place.
     } finally {
       set({ loadingConvs: false });
     }
@@ -542,17 +572,45 @@ export const useChats = create<ChatsState>((set, get) => ({
     const loading = get().loadingMessages[convId];
     if (loading) return;
     set((s) => ({ loadingMessages: { ...s.loadingMessages, [convId]: true } }));
+
+    // Read-through: surface cached messages first so the thread paints
+    // instantly while the network request races.
+    const store = LocalStore.instance;
+    const isBaseFetch = !opts?.before && !opts?.after;
+    let afterIdOverride = opts?.after ?? '';
+    if (store && isBaseFetch && (get().messages[convId] ?? []).length === 0) {
+      try {
+        const cached = await store.messages.listLatest(convId, opts?.limit ?? 50);
+        if (cached.length > 0) {
+          set((s) => ({
+            messages: { ...s.messages, [convId]: cached as LocalMessage[] },
+          }));
+        }
+        // Once we have anything cached, switch to delta-fetch so the
+        // network call only carries the gap since last sync.
+        const latest = await store.messages.latestForChat(convId);
+        if (latest && latest.id && !afterIdOverride) {
+          afterIdOverride = latest.id;
+        }
+      } catch {
+        /* swallow */
+      }
+    }
+
     try {
       const res = await messagingClient.listMessages({
         conversationId: convId,
         beforeId: opts?.before ?? '',
-        afterId: opts?.after ?? '',
+        afterId: afterIdOverride,
         limit: opts?.limit ?? 50,
       });
       // Server returns newest-first; we want oldest-first for display.
       const fresh = res.messages.slice().reverse();
       const isPrepend = !!opts?.before;
-      const isAppend = !!opts?.after;
+      // afterIdOverride may have been promoted internally to fill a gap
+      // against the disk cache — treat that as an append too, otherwise
+      // the cached rows get clobbered with only the delta.
+      const isAppend = !!opts?.after || (!opts?.after && !!afterIdOverride);
       let inserted = 0;
       set((s) => {
         const existing = s.messages[convId] ?? [];
@@ -571,6 +629,12 @@ export const useChats = create<ChatsState>((set, get) => ({
         } else {
           merged = fresh;
           inserted = fresh.length;
+        }
+        // Write-through: persist whatever we just got from the server.
+        if (store && fresh.length > 0) {
+          void store.messages.upsertMany(fresh).catch(() => {
+            /* swallow */
+          });
         }
         // `hasMore` tracks whether there are older messages available; only
         // mutate it on a base/before-fetch.
@@ -783,6 +847,13 @@ export const useChats = create<ChatsState>((set, get) => ({
       // eslint-disable-next-line no-console
       console.warn('[chats] applyMessage: no conversation_id', env);
       return;
+    }
+    // Write-through: persist the incoming message so a reload doesn't lose it.
+    const _persistStore = LocalStore.instance;
+    if (_persistStore) {
+      void _persistStore.messages.upsert(msg as Message).catch(() => {
+        /* swallow */
+      });
     }
     set((s) => {
       const existing = s.messages[convId] ?? [];
