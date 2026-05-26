@@ -582,6 +582,7 @@ export function ChatThread({ convId }: Props) {
           <Composer
             onSend={handleSend}
             onTyping={() => sendTyping(convId)}
+            conversationId={convId}
             placeholder={
               isDm
                 ? `Message @${peerHandle ?? peerName}`
