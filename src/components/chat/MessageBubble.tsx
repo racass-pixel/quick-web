@@ -10,6 +10,7 @@
 import type { Message } from '@racass-pixel/quick-protocol';
 import { Check, CheckCheck } from 'lucide-react';
 import { Avatar } from '../primitives/Avatar';
+import { useProfile } from '../../stores/useProfile';
 
 export type SenderUserLite = {
   id: string;
@@ -92,13 +93,25 @@ export function MessageBubble({
   // Group/channel attribution layout: 32px avatar + bubble stack on the left.
   return (
     <div className="flex items-end gap-2 max-w-full">
-      <div className="shrink-0 self-end mb-1">
+      <button
+        type="button"
+        onClick={() =>
+          useProfile.getState().openLite({
+            id: senderUser?.id ?? message.senderId,
+            handle: senderUser?.handle ?? '',
+            displayName: senderUser?.displayName ?? senderLabel,
+            avatarColor: senderUser?.avatarColor ?? '',
+          })
+        }
+        className="shrink-0 self-end mb-1 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+        aria-label={`Open profile for ${senderLabel}`}
+      >
         <Avatar
           displayName={senderUser?.displayName ?? senderLabel}
           color={senderUser?.avatarColor ?? ''}
           size={32}
         />
-      </div>
+      </button>
       {bubble}
     </div>
   );

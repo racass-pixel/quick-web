@@ -7,6 +7,7 @@ import type { Member } from '@racass-pixel/quick-protocol';
 import { messagingClient } from '../../api/messaging';
 import { Avatar } from '../primitives/Avatar';
 import { Kicker } from '../primitives/Kicker';
+import { useProfile } from '../../stores/useProfile';
 
 export function MembersModal({
   conversationId,
@@ -80,11 +81,18 @@ export function MembersModal({
                     key={u.id}
                     className="flex items-center gap-3 px-5 py-3"
                   >
-                    <Avatar
-                      displayName={u.displayName}
-                      color={u.avatarColor}
-                      size={36}
-                    />
+                    <button
+                      type="button"
+                      aria-label={`Open profile for ${u.displayName}`}
+                      onClick={() => useProfile.getState().open(u)}
+                      className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+                    >
+                      <Avatar
+                        displayName={u.displayName}
+                        color={u.avatarColor}
+                        size={36}
+                      />
+                    </button>
                     <div className="flex-1 min-w-0">
                       <div className="text-ink-1 text-sm truncate">
                         {u.displayName}

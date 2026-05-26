@@ -5,6 +5,7 @@
 import { Link } from '@tanstack/react-router';
 import type { Conversation } from '@racass-pixel/quick-protocol';
 import { Avatar } from '../primitives/Avatar';
+import { useProfile } from '../../stores/useProfile';
 
 function formatRelative(ms: number): string {
   if (!ms) return '';
@@ -57,9 +58,24 @@ export function ConversationRow({
       }`}
     >
       <div className="relative shrink-0">
-        <Avatar displayName={displayName} color={avatarColor} size={54} />
+        {isDm && conv.peer ? (
+          <button
+            type="button"
+            aria-label={`Open profile for ${displayName}`}
+            onClick={(ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              useProfile.getState().open(conv.peer!);
+            }}
+            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+          >
+            <Avatar displayName={displayName} color={avatarColor} size={54} />
+          </button>
+        ) : (
+          <Avatar displayName={displayName} color={avatarColor} size={54} />
+        )}
         {badge && (
-          <span className="absolute -bottom-0.5 -right-0.5 text-[9px] font-mono px-1 py-px bg-bg text-ink-2 border border-line rounded">
+          <span className="absolute -bottom-0.5 -right-0.5 text-[9px] font-mono px-1 py-px bg-bg text-ink-2 border border-line rounded pointer-events-none">
             {badge}
           </span>
         )}

@@ -4,6 +4,7 @@ import { ws } from '../api/ws';
 import { useCall } from '../stores/useCall';
 import { IncomingCallModal } from '../components/call/IncomingCallModal';
 import { CallView } from '../components/call/CallView';
+import { ProfileModal } from '../components/profile/ProfileModal';
 
 function RootLayout() {
   // Forward every realtime envelope to the call store. Call-shaped envelopes
@@ -24,6 +25,8 @@ function RootLayout() {
       {/* Call overlays render above whatever route is mounted. */}
       <IncomingCallModal />
       <CallView />
+      {/* Profile card overlay — opened from any avatar across the app. */}
+      <ProfileModal />
     </div>
   );
 }

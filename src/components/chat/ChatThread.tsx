@@ -17,6 +17,7 @@ import { Composer } from './Composer';
 import { MessageBubble } from './MessageBubble';
 import { TypingDot } from './TypingDot';
 import { useChats } from '../../stores/useChats';
+import { useProfile } from '../../stores/useProfile';
 import { usePresence, formatPresence } from '../../stores/usePresence';
 import { MembersModal } from '../chats/MembersModal';
 import { DmHeaderMenu } from '../chats/DmHeaderMenu';
@@ -165,10 +166,16 @@ export function ChatThread({ convId }: Props) {
       <header className="h-14 border-b border-line px-4 flex items-center gap-3">
         <button
           type="button"
-          onClick={titleClickable ? () => setShowMembers(true) : undefined}
-          disabled={!titleClickable}
-          className={`shrink-0 ${titleClickable ? 'cursor-pointer' : 'cursor-default'}`}
-          aria-label={titleClickable ? 'View members' : undefined}
+          onClick={
+            isDm && conv.peer
+              ? () => useProfile.getState().open(conv.peer!)
+              : titleClickable
+                ? () => setShowMembers(true)
+                : undefined
+          }
+          disabled={!isDm && !titleClickable}
+          className={`shrink-0 ${isDm || titleClickable ? 'cursor-pointer' : 'cursor-default'} rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ember`}
+          aria-label={isDm ? `Open profile for ${peerName}` : titleClickable ? 'View members' : undefined}
         >
           <Avatar displayName={peerName} color={headerColor} size={42} />
         </button>
