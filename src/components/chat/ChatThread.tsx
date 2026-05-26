@@ -48,6 +48,27 @@ const EDGE_TRIGGER = 200; // px from top/bottom to fire pagination
 // re-render loop (React #185).
 const EMPTY_MESSAGES: Message[] = [];
 
+// Quick body-shape sniffer for service messages. We can't always trust the
+// `kind` field (proto Message doesn't carry it, so ListMessages strips it
+// on a reload), but service bodies are always a small JSON object with a
+// string `type` discriminator. Keeps the check cheap by bailing fast on
+// anything that doesn't start with `{`.
+function looksLikeServiceBody(body: string | undefined): boolean {
+  if (!body || body.length < 2 || body.length > 4096) return false;
+  const trimmed = body.trimStart();
+  if (trimmed[0] !== '{') return false;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      typeof (parsed as { type?: unknown }).type === 'string'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function ChatThread({ convId }: Props) {
   const conv = useChats((s) => s.byId[convId]);
   const rawMessages = useChats((s) => s.messages[convId] ?? EMPTY_MESSAGES);
@@ -535,7 +556,15 @@ export function ChatThread({ convId }: Props) {
             const showAttribution = (isGroup || isChannel) && !isOwn;
             const senderUser = showAttribution ? senderUserByMsgId[m.id] : undefined;
             const isAnchor = unreadAnchorId === m.id;
-            const isService = (m as LocalMessage).kind === 'service';
+            // Service-message detection: the proto Message type lacks a
+            // `kind` field, so messages loaded via ListMessages over Connect
+            // arrive without one. WS envelopes carry `kind: 'service'`, but
+            // the same message reloaded after a refresh would lose it.
+            // Fall back to sniffing the body: a service event is always a
+            // JSON object with a string `type` field.
+            const lm = m as LocalMessage;
+            const isService =
+              lm.kind === 'service' || looksLikeServiceBody(m.body);
             return (
               <Fragment key={m.id}>
                 {needsSeparator && day && <DaySeparator label={dayLabel(day)} />}
